@@ -32,6 +32,7 @@ async def test_deadline_created(db_session):
 
 async def test_deadline_member_created(db_session):
     dl = await _add_deadline(db_session)
+    assert dl.id is not None
     member = DeadlineMember(deadline_id=dl.id, user_id=42)
     db_session.add(member)
     await db_session.commit()
@@ -46,6 +47,7 @@ async def test_deadline_member_created(db_session):
 
 async def test_cascade_delete_removes_members(db_session):
     dl = await _add_deadline(db_session)
+    assert dl.id is not None
     for uid in [1, 2, 3]:
         db_session.add(DeadlineMember(deadline_id=dl.id, user_id=uid))
     await db_session.commit()

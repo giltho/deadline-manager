@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -11,7 +11,9 @@ class Deadline(SQLModel, table=True):
     description: str | None = Field(default=None)
     due_date: datetime = Field()  # stored as UTC
     created_by: int = Field()  # Discord user ID
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC).replace(tzinfo=None)
+    )
 
     # TODO: populated by calendar sync once implemented; set to "SYNC_FAILED"
     # if the sync attempt fails so a retry can be triggered later.

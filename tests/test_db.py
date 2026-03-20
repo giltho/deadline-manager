@@ -30,6 +30,7 @@ async def _seed(session: AsyncSession) -> list[Deadline]:
     await session.flush()
 
     # Assign user 99 to "Near" only
+    assert deadlines[1].id is not None
     session.add(DeadlineMember(deadline_id=deadlines[1].id, user_id=99))
     await session.commit()
     for dl in deadlines:

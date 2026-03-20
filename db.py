@@ -99,7 +99,7 @@ async def autocomplete_titles(prefix: str) -> list[str]:
         result = await session.exec(
             select(Deadline.title)
             .where(Deadline.title.istartswith(prefix))  # type: ignore[union-attr]
-            .order_by(Deadline.title)  # type: ignore[arg-type]
+            .order_by(Deadline.title)
             .limit(25)
         )
         return list(result.all())

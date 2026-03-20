@@ -135,13 +135,14 @@ class DeleteConfirmView(discord.ui.View):
         self._deadline = deadline
         self._cog = cog
         self.confirmed: bool | None = None
+        self.message: discord.InteractionMessage | None = None
 
     async def on_timeout(self) -> None:
         for child in self.children:
             if isinstance(child, discord.ui.Button):
                 child.disabled = True
-        if self.message:  # type: ignore[attr-defined]
-            await self.message.edit(  # type: ignore[attr-defined]
+        if self.message:
+            await self.message.edit(
                 content="Deletion timed out — no action taken.", view=self
             )
 

@@ -125,6 +125,7 @@ async def _seed_deadline(
     )
     session.add(dl)
     await session.flush()
+    assert dl.id is not None
     session.add(DeadlineMember(deadline_id=dl.id, user_id=1))
     await session.commit()
     await session.refresh(dl)
