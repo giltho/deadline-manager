@@ -248,8 +248,10 @@ async def test_access_create_duplicate_returns_none(db_session):
     with patch.object(
         db_module, "get_session", return_value=_make_session_ctx(db_session)
     ):
-        access = db_module.DeadlineAccess(1)
-        result = await access.create("Near", due, None, [1])
+        # user 99 is already assigned to "Near" — creating another "Near" for
+        # user 99 should be rejected (per-user uniqueness).
+        access = db_module.DeadlineAccess(99)
+        result = await access.create("Near", due, None, [99])
         assert result is None
 
 
@@ -309,9 +311,10 @@ async def test_access_assign_add(db_session):
         access = db_module.DeadlineAccess(99)
         result = await access.assign("Near", add_ids=[42], remove_ids=[])
         assert result is not None
-        added, removed = result
+        added, removed, conflicts = result
         assert 42 in added
         assert removed == []
+        assert conflicts == []
 
 
 async def test_access_assign_remove(db_session):
@@ -325,9 +328,10 @@ async def test_access_assign_remove(db_session):
         access = db_module.DeadlineAccess(99)
         result = await access.assign("Near", add_ids=[], remove_ids=[99])
         assert result is not None
-        added, removed = result
+        added, removed, conflicts = result
         assert added == []
         assert 99 in removed
+        assert conflicts == []
 
 
 async def test_access_assign_not_assigned_returns_none(db_session):
@@ -341,6 +345,88 @@ async def test_access_assign_not_assigned_returns_none(db_session):
         access = db_module.DeadlineAccess(1)  # not assigned to Near
         result = await access.assign("Near", add_ids=[42], remove_ids=[])
         assert result is None
+
+
+# ── Per-user uniqueness ───────────────────────────────────────────────────────
+
+
+async def test_create_different_users_same_title_allowed(db_session):
+    """Two different users can each have a deadline with the same title."""
+    import db as db_module
+
+    due = datetime.now(UTC).replace(tzinfo=None) + timedelta(days=5)
+
+    with patch.object(
+        db_module, "get_session", return_value=_make_session_ctx(db_session)
+    ):
+        # User 10 creates "CVPR"
+        access10 = db_module.DeadlineAccess(10)
+        dl1 = await access10.create("CVPR", due, None, [10])
+        assert dl1 is not None
+
+    with patch.object(
+        db_module, "get_session", return_value=_make_session_ctx(db_session)
+    ):
+        # User 20 can also create "CVPR" independently
+        access20 = db_module.DeadlineAccess(20)
+        dl2 = await access20.create("CVPR", due, None, [20])
+        assert dl2 is not None
+        assert dl2.id != dl1.id
+
+
+async def test_create_same_user_same_title_rejected(db_session):
+    """A user cannot create two deadlines with the same title."""
+    import db as db_module
+
+    due = datetime.now(UTC).replace(tzinfo=None) + timedelta(days=5)
+
+    with patch.object(
+        db_module, "get_session", return_value=_make_session_ctx(db_session)
+    ):
+        access = db_module.DeadlineAccess(10)
+        dl1 = await access.create("CVPR", due, None, [10])
+        assert dl1 is not None
+
+    with patch.object(
+        db_module, "get_session", return_value=_make_session_ctx(db_session)
+    ):
+        # Same user, same title → rejected
+        result = await access.create("CVPR", due, None, [10])
+        assert result is None
+
+
+async def test_assign_conflict_reported(db_session):
+    """Adding a user who already has a deadline with the same title
+    surfaces a conflict."""
+    import db as db_module
+
+    due = datetime.now(UTC).replace(tzinfo=None) + timedelta(days=5)
+
+    # User 10 already has "CVPR" (their own separate row)
+    with patch.object(
+        db_module, "get_session", return_value=_make_session_ctx(db_session)
+    ):
+        access10 = db_module.DeadlineAccess(10)
+        dl_10 = await access10.create("CVPR", due, None, [10])
+        assert dl_10 is not None
+
+    # User 20 has their own "CVPR"
+    with patch.object(
+        db_module, "get_session", return_value=_make_session_ctx(db_session)
+    ):
+        access20 = db_module.DeadlineAccess(20)
+        dl_20 = await access20.create("CVPR", due, None, [20])
+        assert dl_20 is not None
+
+    # User 20 tries to assign user 10 to their "CVPR" — user 10 already has one
+    with patch.object(
+        db_module, "get_session", return_value=_make_session_ctx(db_session)
+    ):
+        result = await access20.assign("CVPR", add_ids=[10], remove_ids=[])
+        assert result is not None
+        added, removed, conflicts = result
+        assert 10 not in added
+        assert 10 in conflicts
 
 
 # ── DeadlineAccess.delete ─────────────────────────────────────────────────────

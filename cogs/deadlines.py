@@ -357,7 +357,8 @@ class DeadlinesCog(commands.Cog, name="Deadlines"):
         deadline = await access.create(title, parsed_date, description, user_ids)
         if deadline is None:
             await interaction.response.send_message(
-                f"A deadline named **{title}** already exists.", ephemeral=True
+                f"One or more members already have a deadline named **{title}**.",
+                ephemeral=True,
             )
             return
 
@@ -585,12 +586,19 @@ class DeadlinesCog(commands.Cog, name="Deadlines"):
             )
             return
 
-        added, removed = result
+        added, removed, conflicts = result
         parts: list[str] = []
         if added:
             parts.append("Added: " + ", ".join(f"<@{u}>" for u in added))
         if removed:
             parts.append("Removed: " + ", ".join(f"<@{u}>" for u in removed))
+        if conflicts:
+            parts.append(
+                "Skipped (already have a deadline named **"
+                + title
+                + "**): "
+                + ", ".join(f"<@{u}>" for u in conflicts)
+            )
 
         await interaction.response.send_message(
             f"**{title}** — " + " | ".join(parts) if parts else "No changes made.",

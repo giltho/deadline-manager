@@ -17,6 +17,8 @@ import asyncio
 import logging
 
 import discord
+from alembic import command as alembic_command
+from alembic.config import Config as AlembicConfig
 from discord import app_commands
 from discord.ext import commands
 
@@ -43,7 +45,15 @@ class DeadlineBot(commands.Bot):
     async def setup_hook(self) -> None:
         settings = get_settings()
 
-        # Initialise DB schema
+        # Run any pending Alembic migrations (no-op if already at head).
+        # Must run before init_db so existing DBs are migrated before create_all.
+        alembic_cfg = AlembicConfig("alembic.ini")
+        await asyncio.get_event_loop().run_in_executor(
+            None, alembic_command.upgrade, alembic_cfg, "head"
+        )
+        logger.info("Alembic migrations applied.")
+
+        # Initialise DB schema (creates tables on fresh installs)
         await init_db()
         logger.info("Database initialised.")
 

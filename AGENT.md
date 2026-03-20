@@ -18,7 +18,7 @@ CI runs ruff (hard fail), ty (advisory, `continue-on-error: true`), and pytest (
 ## Key Files
 
 ```
-bot.py              Entry point. Loads cogs, calls init_db(), syncs slash commands.
+bot.py              Entry point. Loads cogs, runs alembic upgrade head, calls init_db(), syncs slash commands.
 config.py           Settings via pydantic-settings. ALLOWED_ROLE_IDS is a str;
                     use settings.parsed_role_ids (list[int]) in code.
                     Settings() needs # type: ignore[call-arg].
@@ -59,9 +59,9 @@ access = DeadlineAccess(interaction.user.id)
 await access.get_by_title(title)          # Deadline | None
 await access.list_upcoming(days=7)        # list[Deadline]
 await access.autocomplete(prefix)         # list[str]  (up to 25 results)
-await access.create(title, due_date, description, user_ids)  # Deadline | None (None = duplicate)
+await access.create(title, due_date, description, user_ids)  # Deadline | None (None = per-user title conflict)
 await access.edit(title, new_title, due_date, description)   # Deadline | None (None = not assigned)
-await access.assign(title, add_ids, remove_ids)              # (added, removed) | None
+await access.assign(title, add_ids, remove_ids)              # (added, removed, conflicts) | None
 await access.delete(title)                                   # Deadline | None (None = not assigned)
 ```
 
@@ -109,7 +109,7 @@ own deadlines via `DeadlineAccess.autocomplete`.
 ```python
 class Deadline(SQLModel, table=True):
     id: int | None          # auto-incremented PK
-    title: str              # unique display name
+    title: str              # indexed; unique per-user (enforced in DeadlineAccess, not at DB level)
     description: str | None
     due_date: datetime      # naive UTC
     created_by: int         # Discord user ID
@@ -130,6 +130,7 @@ All datetimes are **naive UTC** — no `tzinfo`. Use `datetime.now(UTC).replace(
 tests/conftest.py           Fixtures: db_session (in-memory SQLite), mock_interaction, make_deadline, make_member
 tests/test_db.py            Tests for DeadlineAccess and module-level helpers
 tests/test_deadlines.py     Tests for slash command handlers; mocks DeadlineAccess
+tests/test_migration.py     Integration tests for the Alembic migration
 tests/test_reminders.py     Tests for the reminders cog
 tests/test_models.py        Unit tests for model properties
 tests/test_checks.py        Tests for has_allowed_role()
@@ -172,3 +173,42 @@ with patch.object(deadlines_module, "_get_deadline_by_title", new=AsyncMock(retu
    as "already assigned". These are advisory and do not block CI.
 8. **Railway volume** — mount at `/data`; `db.py` reads `RAILWAY_VOLUME_MOUNT_PATH` env var
    to locate `deadlines.db`.
+
+## Migrations (Alembic)
+
+Database schema changes are managed via Alembic. Migrations live in `migrations/versions/`.
+
+### Adding a new migration
+
+```bash
+uv run alembic revision -m "describe the change"
+```
+
+Then edit the generated file in `migrations/versions/`. For SQLite always use either
+`op.batch_alter_table(...)` with `recreate='always'` or raw SQL copy-rename — SQLite
+does not support `ALTER TABLE DROP CONSTRAINT` / `ADD COLUMN NOT NULL` etc. directly.
+
+### Running migrations
+
+```bash
+uv run alembic upgrade head   # apply all pending migrations
+uv run alembic downgrade -1   # revert last migration
+```
+
+The bot runs `alembic upgrade head` automatically on startup (in `bot.py`) before
+`init_db()`, so existing deployed databases are migrated on redeploy.
+
+### Current migrations
+
+| Revision | Description |
+|---|---|
+| `001` | Drop global `UNIQUE` constraint on `deadline.title`; uniqueness is now enforced per-user at the application layer in `DeadlineAccess`. |
+
+### env.py notes
+
+- `migrations/env.py` reads `RAILWAY_VOLUME_MOUNT_PATH` (same as `db.py`) to find the DB.
+- Uses the **sync** SQLite driver (`sqlite:///`) — Alembic's standard runner is synchronous.
+  `db.py` continues to use `aiosqlite`.
+- `render_as_batch=True` is set in both offline and online modes (required for SQLite).
+- `import models  # noqa: F401` registers all SQLModel table metadata so Alembic can
+  detect autogenerate diffs.

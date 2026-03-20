@@ -7,7 +7,7 @@ class Deadline(SQLModel, table=True):
     __tablename__ = "deadline"
 
     id: int | None = Field(default=None, primary_key=True)
-    title: str = Field(index=True, unique=True)
+    title: str = Field(index=True)
     description: str | None = Field(default=None)
     due_date: datetime = Field()  # stored as UTC
     created_by: int = Field()  # Discord user ID

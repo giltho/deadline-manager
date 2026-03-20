@@ -148,14 +148,20 @@ class DeadlineAccess:
     ) -> Deadline | None:
         """
         Create a new deadline and assign given user_ids.
-        Returns None if a deadline with the same title already exists.
+        Returns None if any of the user_ids already has a deadline with the
+        same title (per-user uniqueness check).
         """
         async with get_session() as session:
-            existing = await session.exec(
-                select(Deadline).where(Deadline.title == title)
-            )
-            if existing.first():
-                return None
+            # Per-user uniqueness: reject if any target user already has this title.
+            for uid in user_ids:
+                conflict = await session.exec(
+                    select(Deadline)
+                    .join(DeadlineMember)
+                    .where(DeadlineMember.user_id == uid)
+                    .where(Deadline.title == title)
+                )
+                if conflict.first():
+                    return None
 
             deadline = Deadline(
                 title=title,
@@ -213,10 +219,12 @@ class DeadlineAccess:
         title: str,
         add_ids: list[int],
         remove_ids: list[int],
-    ) -> tuple[list[int], list[int]] | None:
+    ) -> tuple[list[int], list[int], list[int]] | None:
         """
         Add/remove members from a deadline.
-        Returns (added, removed) lists, or None if user is not assigned.
+        Returns (added, removed, conflicts) lists, or None if user is not assigned.
+        conflicts contains user IDs from add_ids who already have a *different*
+        deadline with the same title (per-user uniqueness would be violated).
         """
         async with get_session() as session:
             # Check membership in the same session
@@ -232,19 +240,36 @@ class DeadlineAccess:
 
             added: list[int] = []
             removed: list[int] = []
+            conflicts: list[int] = []
 
             for uid in add_ids:
+                # Check if already a member of this deadline
                 exists = await session.exec(
                     select(DeadlineMember).where(
                         DeadlineMember.deadline_id == deadline.id,
                         DeadlineMember.user_id == uid,
                     )
                 )
-                if not exists.first():
-                    session.add(
-                        DeadlineMember(deadline_id=deadline.id, user_id=uid)  # type: ignore[arg-type]
-                    )
-                    added.append(uid)
+                if exists.first():
+                    continue
+
+                # Check per-user uniqueness: does this user have a *different*
+                # deadline with the same title?
+                other = await session.exec(
+                    select(Deadline)
+                    .join(DeadlineMember)
+                    .where(DeadlineMember.user_id == uid)
+                    .where(Deadline.title == title)
+                    .where(Deadline.id != deadline.id)
+                )
+                if other.first():
+                    conflicts.append(uid)
+                    continue
+
+                session.add(
+                    DeadlineMember(deadline_id=deadline.id, user_id=uid)  # type: ignore[arg-type]
+                )
+                added.append(uid)
 
             for uid in remove_ids:
                 existing = await session.exec(
@@ -260,7 +285,7 @@ class DeadlineAccess:
 
             await session.commit()
 
-        return added, removed
+        return added, removed, conflicts
 
     async def delete(self, title: str) -> Deadline | None:
         """

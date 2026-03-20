@@ -13,6 +13,7 @@ dependencies = [
     "python-dateutil>=2.9",
     "pydantic-settings>=2.3",
     "greenlet>=3.0",
+    "alembic>=1.13",
 ]
 
 [dependency-groups]

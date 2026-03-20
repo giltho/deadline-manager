@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
@@ -71,7 +70,11 @@ async def test_deadline_defaults(db_session):
     assert dl.outlook_event_id is None
 
 
-async def test_unique_title_constraint(db_session):
+async def test_same_title_different_users_allowed_at_db_level(db_session):
+    """The DB no longer enforces a global UNIQUE on title.
+    Two rows with the same title but different created_by values are permitted.
+    Per-user uniqueness is enforced at the application layer (DeadlineAccess.create).
+    """
     await _add_deadline(db_session, title="Unique")
     dl2 = Deadline(
         title="Unique",
@@ -79,5 +82,8 @@ async def test_unique_title_constraint(db_session):
         created_by=2,
     )
     db_session.add(dl2)
-    with pytest.raises(Exception):  # IntegrityError from the unique constraint
-        await db_session.commit()
+    await db_session.commit()  # must NOT raise
+
+    result = await db_session.exec(select(Deadline).where(Deadline.title == "Unique"))
+    rows = result.all()
+    assert len(rows) == 2

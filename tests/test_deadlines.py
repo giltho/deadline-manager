@@ -512,7 +512,7 @@ async def test_edit_not_assigned_replies_ephemeral(mock_interaction):
 async def test_assign_adds_member(mock_interaction):
     cog = _make_cog()
 
-    access = _make_access_mock(assign=([555], []))
+    access = _make_access_mock(assign=([555], [], []))
 
     with patch.object(deadlines_module, "DeadlineAccess", return_value=access):
         await cog.deadline_assign.callback(
@@ -549,6 +549,27 @@ async def test_assign_not_assigned_replies_ephemeral(mock_interaction):
             cog, mock_interaction, title="Ghost", add="<@555>", remove=None
         )
 
+    assert (
+        mock_interaction.response.send_message.call_args.kwargs.get("ephemeral") is True
+    )
+
+
+async def test_assign_conflict_shown_in_reply(mock_interaction):
+    """When a user can't be added due to per-user title conflict,
+    they appear in the reply."""
+    cog = _make_cog()
+
+    # added=[], removed=[], conflicts=[777]
+    access = _make_access_mock(assign=([], [], [777]))
+
+    with patch.object(deadlines_module, "DeadlineAccess", return_value=access):
+        await cog.deadline_assign.callback(
+            cog, mock_interaction, title="CVPR", add="<@777>", remove=None
+        )
+
+    mock_interaction.response.send_message.assert_called_once()
+    msg_content = mock_interaction.response.send_message.call_args.args[0]
+    assert "777" in msg_content
     assert (
         mock_interaction.response.send_message.call_args.kwargs.get("ephemeral") is True
     )
