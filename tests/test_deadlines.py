@@ -249,12 +249,51 @@ async def test_show_everyone_is_not_ephemeral(db_session, mock_interaction):
             deadlines_module, "get_deadline_members", new=AsyncMock(return_value=[])
         ),
     ):
-        await cog.deadline_show_everyone.callback(cog, mock_interaction, days=None)
+        await cog.deadline_show_everyone.callback(
+            cog, mock_interaction, days=None, title=None
+        )
 
     mock_interaction.response.send_message.assert_called_once()
     assert (
         mock_interaction.response.send_message.call_args.kwargs.get("ephemeral")
         is False
+    )
+
+
+async def test_show_everyone_single_deadline(db_session, mock_interaction):
+    cog = _make_cog()
+    dl = await _seed_deadline(db_session, title="Single Show")
+
+    with (
+        patch.object(
+            deadlines_module, "get_deadline_by_title", new=AsyncMock(return_value=dl)
+        ),
+        patch.object(
+            deadlines_module, "get_deadline_members", new=AsyncMock(return_value=[])
+        ),
+    ):
+        await cog.deadline_show_everyone.callback(
+            cog, mock_interaction, days=None, title="Single Show"
+        )
+
+    mock_interaction.response.send_message.assert_called_once()
+    call_kwargs = mock_interaction.response.send_message.call_args.kwargs
+    assert call_kwargs.get("ephemeral") is False
+    assert "embed" in call_kwargs
+
+
+async def test_show_everyone_single_deadline_not_found(mock_interaction):
+    cog = _make_cog()
+
+    with patch.object(
+        deadlines_module, "get_deadline_by_title", new=AsyncMock(return_value=None)
+    ):
+        await cog.deadline_show_everyone.callback(
+            cog, mock_interaction, days=None, title="Ghost"
+        )
+
+    assert (
+        mock_interaction.response.send_message.call_args.kwargs.get("ephemeral") is True
     )
 
 
@@ -360,6 +399,35 @@ async def test_edit_no_fields_replies_ephemeral(mock_interaction):
         due_date=None,
         description=None,
     )
+
+    assert (
+        mock_interaction.response.send_message.call_args.kwargs.get("ephemeral") is True
+    )
+
+
+async def test_edit_success_is_ephemeral(db_session, mock_interaction):
+    cog = _make_cog()
+    dl = await _seed_deadline(db_session, title="Edit Ephemeral")
+
+    with (
+        patch.object(
+            deadlines_module, "get_deadline_by_title", new=AsyncMock(return_value=dl)
+        ),
+        patch.object(
+            deadlines_module, "get_session", return_value=_session_ctx(db_session)
+        ),
+        patch.object(
+            deadlines_module, "get_deadline_members", new=AsyncMock(return_value=[])
+        ),
+    ):
+        await cog.deadline_edit.callback(
+            cog,
+            mock_interaction,
+            title="Edit Ephemeral",
+            new_title="Edit Ephemeral 2",
+            due_date=None,
+            description=None,
+        )
 
     assert (
         mock_interaction.response.send_message.call_args.kwargs.get("ephemeral") is True

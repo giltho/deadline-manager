@@ -398,13 +398,32 @@ class DeadlinesCog(commands.Cog, name="Deadlines"):
     @has_allowed_role()
     @app_commands.describe(
         days="Only show deadlines due within this many days",
+        title="Share a single deadline by name (optional)",
     )
+    @app_commands.autocomplete(title=_title_autocomplete)
     async def deadline_show_everyone(
         self,
         interaction: discord.Interaction,
         days: int | None = None,
+        title: str | None = None,
     ) -> None:
-        await self._send_deadline_list(interaction, days=days, ephemeral=False)
+        if title is not None:
+            # Show a single deadline publicly
+            deadline = await get_deadline_by_title(title)
+            if deadline is None:
+                await interaction.response.send_message(
+                    f"No deadline found with title **{title}**.", ephemeral=True
+                )
+                return
+            members = await get_deadline_members(deadline.id)  # type: ignore[arg-type]
+            embed = _build_deadline_embed(
+                deadline,
+                members,
+                sync_enabled=self._settings.calendar_sync_enabled,
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=False)
+        else:
+            await self._send_deadline_list(interaction, days=days, ephemeral=False)
 
     # ── /deadline info ────────────────────────────────────────────────────────
 
@@ -512,7 +531,7 @@ class DeadlinesCog(commands.Cog, name="Deadlines"):
             sync_enabled=self._settings.calendar_sync_enabled,
             title_prefix="Updated: ",
         )
-        await interaction.response.send_message(embed=embed)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     # ── /deadline assign ──────────────────────────────────────────────────────
 
@@ -642,7 +661,7 @@ class DeadlinesCog(commands.Cog, name="Deadlines"):
                 await session.commit()
 
         await interaction.response.send_message(
-            f"Deadline **{title}** has been deleted.", ephemeral=False
+            f"Deadline **{title}** has been deleted.", ephemeral=True
         )
 
     # ── calendar_sync TODO helpers (implement alongside MS Graph) ────────────
