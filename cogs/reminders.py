@@ -8,7 +8,7 @@ so they can be cleanly replaced when a deadline is edited or rescheduled.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import discord
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -56,10 +56,10 @@ class RemindersCog(commands.Cog, name="Reminders"):
         Create (or replace) the three reminder jobs for *deadline*.
         Jobs whose fire time has already passed are silently skipped.
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         for label, days_before in REMINDER_OFFSETS:
-            fire_at = deadline.due_date.replace(tzinfo=timezone.utc) - timedelta(
+            fire_at = deadline.due_date.replace(tzinfo=UTC) - timedelta(
                 days=days_before
             )
             if fire_at <= now:
@@ -101,9 +101,7 @@ class RemindersCog(commands.Cog, name="Reminders"):
         deadlines = await get_all_future_deadlines()
         for deadline in deadlines:
             self.schedule_reminders(deadline)
-        logger.info(
-            "Rescheduled reminders for %d future deadline(s).", len(deadlines)
-        )
+        logger.info("Rescheduled reminders for %d future deadline(s).", len(deadlines))
 
     async def _send_reminder(
         self,
@@ -137,11 +135,12 @@ class RemindersCog(commands.Cog, name="Reminders"):
         mentions = " ".join(f"<@{m.user_id}>" for m in members)
 
         # Discord timestamp: <t:UNIX:F> renders in each user's local timezone
-        unix_ts = int(due_date.replace(tzinfo=timezone.utc).timestamp())
+        unix_ts = int(due_date.replace(tzinfo=UTC).timestamp())
         timestamp_str = f"<t:{unix_ts}:F>"
 
         lines = [
-            f"\u23f0  Reminder: **{deadline_title}** is due in {days_before} days ({timestamp_str})",
+            f"\u23f0  Reminder: **{deadline_title}** is due in "
+            f"{days_before} days ({timestamp_str})",
         ]
         if mentions:
             lines.append(mentions)

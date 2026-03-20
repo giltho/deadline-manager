@@ -8,10 +8,8 @@ expanded to cover HTTP interactions (mocked via respx).
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
-
-import pytest
 
 from calendar_sync import SYNC_FAILED, CalendarClient, make_calendar_client
 
@@ -51,7 +49,7 @@ async def test_create_event_stub_returns_none():
     result = await client.create_event(
         title="Test",
         description=None,
-        due_date=datetime.now(timezone.utc) + timedelta(days=5),
+        due_date=datetime.now(UTC) + timedelta(days=5),
     )
     assert result is None
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,7 +14,7 @@ from models import Deadline, DeadlineMember
 async def _add_deadline(session: AsyncSession, title: str = "Test") -> Deadline:
     dl = Deadline(
         title=title,
-        due_date=datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=5),
+        due_date=datetime.now(UTC).replace(tzinfo=None) + timedelta(days=5),
         created_by=1,
     )
     session.add(dl)
@@ -73,7 +73,7 @@ async def test_unique_title_constraint(db_session):
     await _add_deadline(db_session, title="Unique")
     dl2 = Deadline(
         title="Unique",
-        due_date=datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=5),
+        due_date=datetime.now(UTC).replace(tzinfo=None) + timedelta(days=5),
         created_by=2,
     )
     db_session.add(dl2)

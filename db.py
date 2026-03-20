@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlmodel import SQLModel, select
@@ -44,7 +44,7 @@ async def get_deadline_by_title(title: str) -> Deadline | None:
 
 async def get_all_future_deadlines() -> list[Deadline]:
     """Return all deadlines whose due_date is in the future (UTC), sorted ascending."""
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now = datetime.now(UTC).replace(tzinfo=None)
     async with get_session() as session:
         result = await session.exec(
             select(Deadline).where(Deadline.due_date > now).order_by(Deadline.due_date)  # type: ignore[arg-type]
@@ -64,7 +64,7 @@ async def get_upcoming_deadlines(
     """
     from datetime import timedelta
 
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now = datetime.now(UTC).replace(tzinfo=None)
 
     async with get_session() as session:
         stmt = select(Deadline).where(Deadline.due_date > now)

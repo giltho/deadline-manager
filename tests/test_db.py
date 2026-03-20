@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
-from typing import AsyncGenerator
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
-import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import Deadline, DeadlineMember
@@ -21,7 +19,7 @@ async def _make_session_ctx(session: AsyncSession):
 
 async def _seed(session: AsyncSession) -> list[Deadline]:
     """Insert three deadlines: past, near, far."""
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now = datetime.now(UTC).replace(tzinfo=None)
     deadlines = [
         Deadline(title="Past", due_date=now - timedelta(days=1), created_by=1),
         Deadline(title="Near", due_date=now + timedelta(days=2), created_by=1),

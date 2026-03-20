@@ -33,7 +33,13 @@ def test_valid_settings(monkeypatch):
 
 
 def test_missing_required_fields(monkeypatch):
-    for key in ("DISCORD_TOKEN", "DISCORD_GUILD_ID", "ALLOWED_ROLE_IDS", "REMINDER_CHANNEL_ID"):
+    keys = (
+        "DISCORD_TOKEN",
+        "DISCORD_GUILD_ID",
+        "ALLOWED_ROLE_IDS",
+        "REMINDER_CHANNEL_ID",
+    )
+    for key in keys:
         monkeypatch.delenv(key, raising=False)
 
     with pytest.raises((ValidationError, Exception)):

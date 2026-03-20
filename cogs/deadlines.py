@@ -12,10 +12,9 @@ Commands:
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import discord
 from dateutil import parser as dateutil_parser
@@ -45,7 +44,7 @@ COLOUR_BLUE = discord.Colour.blue()
 
 
 def _days_remaining(due_date: datetime) -> int:
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now = datetime.now(UTC).replace(tzinfo=None)
     delta = due_date - now
     return max(0, delta.days)
 
@@ -68,7 +67,7 @@ def _parse_due_date(raw: str) -> datetime | None:
         dt = dateutil_parser.parse(raw, yearfirst=True)
         # If no timezone info, treat as UTC
         if dt.tzinfo is not None:
-            dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+            dt = dt.astimezone(UTC).replace(tzinfo=None)
         return dt
     except (ValueError, OverflowError):
         return None
@@ -98,7 +97,7 @@ def _build_deadline_embed(
 ) -> discord.Embed:
     days = _days_remaining(deadline.due_date)
     colour = _deadline_colour(days)
-    unix_ts = int(deadline.due_date.replace(tzinfo=timezone.utc).timestamp())
+    unix_ts = int(deadline.due_date.replace(tzinfo=UTC).timestamp())
     member_mentions = (
         ", ".join(f"<@{m.user_id}>" for m in members) if members else "None"
     )
@@ -114,7 +113,7 @@ def _build_deadline_embed(
     embed.add_field(name="Created by", value=f"<@{deadline.created_by}>", inline=True)
     embed.add_field(
         name="Created at",
-        value=f"<t:{int(deadline.created_at.replace(tzinfo=timezone.utc).timestamp())}:D>",
+        value=f"<t:{int(deadline.created_at.replace(tzinfo=UTC).timestamp())}:D>",
         inline=True,
     )
     embed.add_field(
@@ -131,7 +130,7 @@ def _build_deadline_embed(
 class DeleteConfirmView(discord.ui.View):
     """A two-button (Confirm / Cancel) prompt for deadline deletion."""
 
-    def __init__(self, deadline: Deadline, cog: "DeadlinesCog") -> None:
+    def __init__(self, deadline: Deadline, cog: DeadlinesCog) -> None:
         super().__init__(timeout=60)
         self._deadline = deadline
         self._cog = cog
@@ -203,7 +202,7 @@ class DeadlineListView(discord.ui.View):
 
         for deadline in page_items:
             days = _days_remaining(deadline.due_date)
-            unix_ts = int(deadline.due_date.replace(tzinfo=timezone.utc).timestamp())
+            unix_ts = int(deadline.due_date.replace(tzinfo=UTC).timestamp())
             members = self._member_map.get(deadline.id or 0, [])
             member_str = (
                 ", ".join(f"<@{m.user_id}>" for m in members) if members else "None"
@@ -521,7 +520,9 @@ class DeadlinesCog(commands.Cog, name="Deadlines"):
                 reminders_cog.schedule_reminders(deadline)
 
         # calendar_sync TODO: update Outlook event if one exists
-        # if self._calendar is not None and deadline.outlook_event_id not in (None, SYNC_FAILED):
+        # if self._calendar is not None and deadline.outlook_event_id not in (
+        #     None, SYNC_FAILED
+        # ):
         #     asyncio.create_task(self._sync_update(deadline, ...))
 
         members = await get_deadline_members(deadline.id)  # type: ignore[arg-type]
@@ -651,7 +652,9 @@ class DeadlinesCog(commands.Cog, name="Deadlines"):
                 reminders_cog.cancel_reminders(deadline_id)  # type: ignore[arg-type]
 
         # calendar_sync TODO: delete Outlook event if one exists
-        # if self._calendar is not None and deadline.outlook_event_id not in (None, SYNC_FAILED):
+        # if self._calendar is not None and deadline.outlook_event_id not in (
+        #     None, SYNC_FAILED
+        # ):
         #     asyncio.create_task(self._sync_delete(deadline.outlook_event_id))
 
         async with get_session() as session:
@@ -666,7 +669,9 @@ class DeadlinesCog(commands.Cog, name="Deadlines"):
 
     # ── calendar_sync TODO helpers (implement alongside MS Graph) ────────────
     # async def _sync_create(self, deadline: Deadline) -> None: ...
-    # async def _sync_update(self, deadline: Deadline, changed_fields: dict) -> None: ...
+    # async def _sync_update(
+    #     self, deadline: Deadline, changed_fields: dict
+    # ) -> None: ...
     # async def _sync_delete(self, event_id: str) -> None: ...
 
 

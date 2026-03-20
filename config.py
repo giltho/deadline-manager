@@ -30,7 +30,10 @@ class Settings(BaseSettings):
     @field_validator("allowed_role_ids", mode="before")
     @classmethod
     def parse_role_ids(cls, v: object) -> str:
-        """Accept a list (from code) or a raw string (from env), normalise to CSV string."""
+        """Accept a list (from code) or raw string (from env).
+
+        Normalises the value to a CSV string.
+        """
         if isinstance(v, (list, tuple)):
             return ",".join(str(x) for x in v)
         return str(v)

@@ -4,9 +4,9 @@ Shared fixtures for the test suite.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-from typing import AsyncGenerator
-from unittest.mock import AsyncMock, MagicMock, patch
+from collections.abc import AsyncGenerator
+from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -14,7 +14,6 @@ from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from models import Deadline, DeadlineMember
-
 
 # ── In-memory database ────────────────────────────────────────────────────────
 
@@ -107,9 +106,10 @@ def make_deadline(
         id=id,
         title=title,
         description=description,
-        due_date=due_date or datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=10),
+        due_date=due_date
+        or datetime.now(UTC).replace(tzinfo=None) + timedelta(days=10),
         created_by=created_by,
-        created_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        created_at=datetime.now(UTC).replace(tzinfo=None),
         outlook_event_id=outlook_event_id,
     )
 

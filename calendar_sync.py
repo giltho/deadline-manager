@@ -17,10 +17,9 @@ these methods today — they just no-op and return None/False until implemented.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime
 
 # TODO: import httpx once implementing
-
 from config import Settings
 
 logger = logging.getLogger(__name__)
@@ -46,7 +45,7 @@ class CalendarClient:
         self._settings = settings
         # TODO: initialise httpx.AsyncClient here
         self._access_token: str | None = None
-        self._token_expiry: datetime = datetime.min.replace(tzinfo=timezone.utc)
+        self._token_expiry: datetime = datetime.min.replace(tzinfo=UTC)
 
     async def _get_token(self) -> str:
         """
@@ -103,7 +102,10 @@ class CalendarClient:
         return False
 
     async def close(self) -> None:
-        """Close the underlying HTTP client. TODO: call client.aclose() once implemented."""
+        """Close the underlying HTTP client.
+
+        TODO: call client.aclose() once implemented.
+        """
         pass
 
 

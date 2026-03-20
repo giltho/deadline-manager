@@ -56,7 +56,11 @@ class DeadlineBot(commands.Bot):
         guild = discord.Object(id=settings.discord_guild_id)
         self.tree.copy_global_to(guild=guild)
         synced = await self.tree.sync(guild=guild)
-        logger.info("Synced %d slash command(s) to guild %d.", len(synced), settings.discord_guild_id)
+        logger.info(
+            "Synced %d slash command(s) to guild %d.",
+            len(synced),
+            settings.discord_guild_id,
+        )
 
     async def on_ready(self) -> None:
         logger.info("Logged in as %s (ID: %d)", self.user, self.user.id)  # type: ignore[union-attr]

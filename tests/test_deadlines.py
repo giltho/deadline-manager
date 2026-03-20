@@ -8,24 +8,21 @@ DB operations use the in-memory SQLite engine from conftest.
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
-from typing import AsyncGenerator
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import cogs.deadlines as deadlines_module
+from calendar_sync import SYNC_FAILED
 from cogs.deadlines import (
     DeadlinesCog,
+    _days_remaining,
     _extract_user_ids,
     _parse_due_date,
-    _days_remaining,
     _sync_status_label,
 )
 from models import Deadline, DeadlineMember
-from calendar_sync import SYNC_FAILED
-
 
 # ── Unit tests for pure helpers ───────────────────────────────────────────────
 
@@ -67,13 +64,13 @@ def test_extract_user_ids_empty():
 
 
 def test_days_remaining_future():
-    future = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=5)
-    # timedelta.days truncates fractional days; result is 4 or 5 depending on sub-second timing
+    future = datetime.now(UTC).replace(tzinfo=None) + timedelta(days=5)
+    # timedelta.days truncates fractional days; result is 4 or 5 depending on timing
     assert _days_remaining(future) >= 4
 
 
 def test_days_remaining_past_returns_zero():
-    past = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=1)
+    past = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=1)
     assert _days_remaining(past) == 0
 
 
@@ -123,8 +120,7 @@ async def _seed_deadline(
 ) -> Deadline:
     dl = Deadline(
         title=title,
-        due_date=datetime.now(timezone.utc).replace(tzinfo=None)
-        + timedelta(days=days_ahead),
+        due_date=datetime.now(UTC).replace(tzinfo=None) + timedelta(days=days_ahead),
         created_by=1,
     )
     session.add(dl)

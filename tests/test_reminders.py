@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
+from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock, MagicMock
 
 from tests.conftest import make_deadline
 
@@ -27,7 +25,7 @@ def test_schedule_reminders_creates_three_jobs():
     cog = _make_reminders_cog()
     deadline = make_deadline(
         id=1,
-        due_date=datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=30),
+        due_date=datetime.now(UTC).replace(tzinfo=None) + timedelta(days=30),
     )
     cog.schedule_reminders(deadline)
     assert cog.scheduler.add_job.call_count == 3
@@ -38,7 +36,7 @@ def test_schedule_reminders_skips_past_jobs():
     # Due in 5 days — 14d and 7d reminders are already past, only 3d remains
     deadline = make_deadline(
         id=2,
-        due_date=datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=5),
+        due_date=datetime.now(UTC).replace(tzinfo=None) + timedelta(days=5),
     )
     cog.schedule_reminders(deadline)
     assert cog.scheduler.add_job.call_count == 1
@@ -48,7 +46,7 @@ def test_schedule_reminders_skips_all_when_overdue():
     cog = _make_reminders_cog()
     deadline = make_deadline(
         id=3,
-        due_date=datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=1),
+        due_date=datetime.now(UTC).replace(tzinfo=None) - timedelta(days=1),
     )
     cog.schedule_reminders(deadline)
     assert cog.scheduler.add_job.call_count == 0
@@ -58,7 +56,7 @@ def test_schedule_reminders_uses_replace_existing():
     cog = _make_reminders_cog()
     deadline = make_deadline(
         id=4,
-        due_date=datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=30),
+        due_date=datetime.now(UTC).replace(tzinfo=None) + timedelta(days=30),
     )
     cog.schedule_reminders(deadline)
     calls = cog.scheduler.add_job.call_args_list
@@ -70,7 +68,7 @@ def test_schedule_reminders_job_ids():
     cog = _make_reminders_cog()
     deadline = make_deadline(
         id=5,
-        due_date=datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=30),
+        due_date=datetime.now(UTC).replace(tzinfo=None) + timedelta(days=30),
     )
     cog.schedule_reminders(deadline)
     job_ids = {call.kwargs["id"] for call in cog.scheduler.add_job.call_args_list}
@@ -98,7 +96,7 @@ def test_reschedule_replaces_existing_jobs():
     cog = _make_reminders_cog()
     deadline = make_deadline(
         id=6,
-        due_date=datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=30),
+        due_date=datetime.now(UTC).replace(tzinfo=None) + timedelta(days=30),
     )
     cog.schedule_reminders(deadline)
     cog.schedule_reminders(deadline)
@@ -137,7 +135,7 @@ async def test_send_reminder_posts_to_channel(mocker):
         deadline_id=1,
         deadline_title="My Deadline",
         deadline_description="Some notes",
-        due_date=datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=7),
+        due_date=datetime.now(UTC).replace(tzinfo=None) + timedelta(days=7),
         days_before=7,
     )
 
@@ -149,8 +147,9 @@ async def test_send_reminder_posts_to_channel(mocker):
 
 
 async def test_send_reminder_no_channel_logs_error(mocker, caplog):
-    from cogs.reminders import RemindersCog
     import logging
+
+    from cogs.reminders import RemindersCog
 
     bot = MagicMock()
     bot.get_channel = MagicMock(return_value=None)
@@ -169,7 +168,7 @@ async def test_send_reminder_no_channel_logs_error(mocker, caplog):
             deadline_id=1,
             deadline_title="Test",
             deadline_description=None,
-            due_date=datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=3),
+            due_date=datetime.now(UTC).replace(tzinfo=None) + timedelta(days=3),
             days_before=3,
         )
 
