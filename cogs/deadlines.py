@@ -4,6 +4,7 @@ Deadlines cog — all slash commands for deadline management.
 Commands:
   /deadline add
   /deadline list
+  /deadline show-everyone
   /deadline info
   /deadline edit
   /deadline assign
@@ -20,18 +21,11 @@ import discord
 from dateutil import parser as dateutil_parser
 from discord import app_commands
 from discord.ext import commands
-from sqlmodel import select
 
 from calendar_sync import SYNC_FAILED, make_calendar_client
 from checks import has_allowed_role
 from config import get_settings
-from db import (
-    autocomplete_titles,
-    get_deadline_by_title,
-    get_deadline_members,
-    get_session,
-    get_upcoming_deadlines,
-)
+from db import DeadlineAccess, _get_deadline_by_title, get_deadline_members, get_session
 from models import Deadline, DeadlineMember
 
 logger = logging.getLogger(__name__)
@@ -254,7 +248,8 @@ class DeadlinesCog(commands.Cog, name="Deadlines"):
         interaction: discord.Interaction,
         current: str,
     ) -> list[app_commands.Choice[str]]:
-        titles = await autocomplete_titles(current, user_id=interaction.user.id)
+        access = DeadlineAccess(interaction.user.id)
+        titles = await access.autocomplete(current)
         return [app_commands.Choice(name=t, value=t) for t in titles]
 
     # ── /deadline group ───────────────────────────────────────────────────────
@@ -299,32 +294,13 @@ class DeadlinesCog(commands.Cog, name="Deadlines"):
         else:
             user_ids = [interaction.user.id]
 
-        async with get_session() as session:
-            # Check for duplicate title
-            existing = await session.exec(
-                select(Deadline).where(Deadline.title == title)
+        access = DeadlineAccess(interaction.user.id)
+        deadline = await access.create(title, parsed_date, description, user_ids)
+        if deadline is None:
+            await interaction.response.send_message(
+                f"A deadline named **{title}** already exists.", ephemeral=True
             )
-            if existing.first():
-                await interaction.response.send_message(
-                    f"A deadline named **{title}** already exists.", ephemeral=True
-                )
-                return
-
-            deadline = Deadline(
-                title=title,
-                description=description,
-                due_date=parsed_date,
-                created_by=interaction.user.id,
-            )
-            session.add(deadline)
-            await session.flush()  # populate deadline.id
-
-            for uid in user_ids:
-                session.add(
-                    DeadlineMember(deadline_id=deadline.id, user_id=uid)  # type: ignore[arg-type]
-                )
-            await session.commit()
-            await session.refresh(deadline)
+            return
 
         # Schedule reminders
         reminders_cog = self.bot.cogs.get("Reminders")
@@ -335,8 +311,6 @@ class DeadlinesCog(commands.Cog, name="Deadlines"):
                 reminders_cog.schedule_reminders(deadline)
 
         # calendar_sync TODO: call self._calendar.create_event() here once implemented
-        # if self._calendar is not None:
-        #     asyncio.create_task(self._sync_create(deadline))
 
         member_rows = await get_deadline_members(deadline.id)  # type: ignore[arg-type]
         embed = _build_deadline_embed(
@@ -356,8 +330,8 @@ class DeadlinesCog(commands.Cog, name="Deadlines"):
         ephemeral: bool,
     ) -> None:
         """Fetch and send the invoking user's deadline list."""
-        user_id = interaction.user.id
-        deadlines = await get_upcoming_deadlines(days=days, user_id=user_id)
+        access = DeadlineAccess(interaction.user.id)
+        deadlines = await access.list_upcoming(days=days)
 
         # Fetch members for all deadlines in a single pass
         member_map: dict[int, list[DeadlineMember]] = {}
@@ -408,8 +382,8 @@ class DeadlinesCog(commands.Cog, name="Deadlines"):
         title: str | None = None,
     ) -> None:
         if title is not None:
-            # Show a single deadline publicly
-            deadline = await get_deadline_by_title(title)
+            # Show a single deadline publicly; bypass membership filter for public share
+            deadline = await _get_deadline_by_title(title)
             if deadline is None:
                 await interaction.response.send_message(
                     f"No deadline found with title **{title}**.", ephemeral=True
@@ -436,7 +410,8 @@ class DeadlinesCog(commands.Cog, name="Deadlines"):
         interaction: discord.Interaction,
         title: str,
     ) -> None:
-        deadline = await get_deadline_by_title(title)
+        access = DeadlineAccess(interaction.user.id)
+        deadline = await access.get_by_title(title)
         if deadline is None:
             await interaction.response.send_message(
                 f"No deadline found with title **{title}**.", ephemeral=True
@@ -444,12 +419,6 @@ class DeadlinesCog(commands.Cog, name="Deadlines"):
             return
 
         members = await get_deadline_members(deadline.id)  # type: ignore[arg-type]
-        if not any(m.user_id == interaction.user.id for m in members):
-            await interaction.response.send_message(
-                f"No deadline found with title **{title}**.", ephemeral=True
-            )
-            return
-
         embed = _build_deadline_embed(
             deadline,
             members,
@@ -482,13 +451,6 @@ class DeadlinesCog(commands.Cog, name="Deadlines"):
             )
             return
 
-        deadline = await get_deadline_by_title(title)
-        if deadline is None:
-            await interaction.response.send_message(
-                f"No deadline found with title **{title}**.", ephemeral=True
-            )
-            return
-
         parsed_date: datetime | None = None
         if due_date is not None:
             parsed_date = _parse_due_date(due_date)
@@ -498,25 +460,15 @@ class DeadlinesCog(commands.Cog, name="Deadlines"):
                 )
                 return
 
-        async with get_session() as session:
-            db_deadline = await session.get(Deadline, deadline.id)
-            if db_deadline is None:
-                await interaction.response.send_message(
-                    "Deadline not found.", ephemeral=True
-                )
-                return
-
-            if new_title is not None:
-                db_deadline.title = new_title
-            if parsed_date is not None:
-                db_deadline.due_date = parsed_date
-            if description is not None:
-                db_deadline.description = description
-
-            session.add(db_deadline)
-            await session.commit()
-            await session.refresh(db_deadline)
-            deadline = db_deadline
+        access = DeadlineAccess(interaction.user.id)
+        deadline = await access.edit(
+            title, new_title=new_title, due_date=parsed_date, description=description
+        )
+        if deadline is None:
+            await interaction.response.send_message(
+                f"No deadline found with title **{title}**.", ephemeral=True
+            )
+            return
 
         # Reschedule reminders with updated due_date
         reminders_cog = self.bot.cogs.get("Reminders")
@@ -527,10 +479,6 @@ class DeadlinesCog(commands.Cog, name="Deadlines"):
                 reminders_cog.schedule_reminders(deadline)
 
         # calendar_sync TODO: update Outlook event if one exists
-        # if self._calendar is not None and deadline.outlook_event_id not in (
-        #     None, SYNC_FAILED
-        # ):
-        #     asyncio.create_task(self._sync_update(deadline, ...))
 
         members = await get_deadline_members(deadline.id)  # type: ignore[arg-type]
         embed = _build_deadline_embed(
@@ -566,46 +514,19 @@ class DeadlinesCog(commands.Cog, name="Deadlines"):
             )
             return
 
-        deadline = await get_deadline_by_title(title)
-        if deadline is None:
+        access = DeadlineAccess(interaction.user.id)
+        result = await access.assign(
+            title,
+            add_ids=_extract_user_ids(add) if add else [],
+            remove_ids=_extract_user_ids(remove) if remove else [],
+        )
+        if result is None:
             await interaction.response.send_message(
                 f"No deadline found with title **{title}**.", ephemeral=True
             )
             return
 
-        added: list[int] = []
-        removed: list[int] = []
-
-        async with get_session() as session:
-            if add:
-                for uid in _extract_user_ids(add):
-                    exists = await session.exec(
-                        select(DeadlineMember).where(
-                            DeadlineMember.deadline_id == deadline.id,
-                            DeadlineMember.user_id == uid,
-                        )
-                    )
-                    if not exists.first():
-                        session.add(
-                            DeadlineMember(deadline_id=deadline.id, user_id=uid)  # type: ignore[arg-type]
-                        )
-                        added.append(uid)
-
-            if remove:
-                for uid in _extract_user_ids(remove):
-                    existing = await session.exec(
-                        select(DeadlineMember).where(
-                            DeadlineMember.deadline_id == deadline.id,
-                            DeadlineMember.user_id == uid,
-                        )
-                    )
-                    row = existing.first()
-                    if row:
-                        await session.delete(row)
-                        removed.append(uid)
-
-            await session.commit()
-
+        added, removed = result
         parts: list[str] = []
         if added:
             parts.append("Added: " + ", ".join(f"<@{u}>" for u in added))
@@ -628,7 +549,8 @@ class DeadlinesCog(commands.Cog, name="Deadlines"):
         interaction: discord.Interaction,
         title: str,
     ) -> None:
-        deadline = await get_deadline_by_title(title)
+        access = DeadlineAccess(interaction.user.id)
+        deadline = await access.get_by_title(title)
         if deadline is None:
             await interaction.response.send_message(
                 f"No deadline found with title **{title}**.", ephemeral=True
@@ -659,10 +581,6 @@ class DeadlinesCog(commands.Cog, name="Deadlines"):
                 reminders_cog.cancel_reminders(deadline_id)  # type: ignore[arg-type]
 
         # calendar_sync TODO: delete Outlook event if one exists
-        # if self._calendar is not None and deadline.outlook_event_id not in (
-        #     None, SYNC_FAILED
-        # ):
-        #     asyncio.create_task(self._sync_delete(deadline.outlook_event_id))
 
         async with get_session() as session:
             db_deadline = await session.get(Deadline, deadline_id)
