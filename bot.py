@@ -4,7 +4,7 @@ Entry point for the Deadline Bot.
 Startup sequence:
   1. Load settings from .env
   2. Initialise the SQLite database (create tables if missing)
-  3. Set up the Discord bot with the required intents
+  3. Set up the Discord bot with default intents
   4. Register a global error handler for access-control check failures
   5. Load cogs (Reminders first so the scheduler is running before commands fire)
   6. Sync slash commands to the configured guild
@@ -38,8 +38,6 @@ COGS = [
 class DeadlineBot(commands.Bot):
     def __init__(self) -> None:
         intents = discord.Intents.default()
-        # Member intent needed to resolve member objects in guilds
-        intents.members = True
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self) -> None:

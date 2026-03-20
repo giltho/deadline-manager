@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -10,8 +11,10 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from models import Deadline, DeadlineMember
 
-# SQLite database file at the project root
-_DATABASE_URL = "sqlite+aiosqlite:///./deadlines.db"
+# Use a Railway persistent volume when available, otherwise local file.
+# On Railway: attach a volume at /data and this picks it up automatically.
+_db_dir = os.environ.get("RAILWAY_VOLUME_MOUNT_PATH", ".")
+_DATABASE_URL = f"sqlite+aiosqlite:///{_db_dir}/deadlines.db"
 
 _engine = create_async_engine(_DATABASE_URL, echo=False)
 
@@ -35,9 +38,7 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
 async def get_deadline_by_title(title: str) -> Deadline | None:
     """Return a Deadline by exact title match, or None."""
     async with get_session() as session:
-        result = await session.exec(
-            select(Deadline).where(Deadline.title == title)
-        )
+        result = await session.exec(select(Deadline).where(Deadline.title == title))
         return result.first()
 
 
@@ -46,9 +47,7 @@ async def get_all_future_deadlines() -> list[Deadline]:
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     async with get_session() as session:
         result = await session.exec(
-            select(Deadline)
-            .where(Deadline.due_date > now)
-            .order_by(Deadline.due_date)  # type: ignore[arg-type]
+            select(Deadline).where(Deadline.due_date > now).order_by(Deadline.due_date)  # type: ignore[arg-type]
         )
         return list(result.all())
 
@@ -75,9 +74,7 @@ async def get_upcoming_deadlines(
             stmt = stmt.where(Deadline.due_date <= cutoff)
 
         if user_id is not None:
-            stmt = stmt.join(DeadlineMember).where(
-                DeadlineMember.user_id == user_id
-            )
+            stmt = stmt.join(DeadlineMember).where(DeadlineMember.user_id == user_id)
 
         stmt = stmt.order_by(Deadline.due_date)  # type: ignore[arg-type]
         result = await session.exec(stmt)
@@ -88,9 +85,7 @@ async def get_deadline_members(deadline_id: int) -> list[DeadlineMember]:
     """Return all DeadlineMember rows for a given deadline."""
     async with get_session() as session:
         result = await session.exec(
-            select(DeadlineMember).where(
-                DeadlineMember.deadline_id == deadline_id
-            )
+            select(DeadlineMember).where(DeadlineMember.deadline_id == deadline_id)
         )
         return list(result.all())
 

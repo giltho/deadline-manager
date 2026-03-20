@@ -156,9 +156,7 @@ class DeleteConfirmView(discord.ui.View):
     ) -> None:
         self.confirmed = False
         self.stop()
-        await interaction.response.send_message(
-            "Deletion cancelled.", ephemeral=True
-        )
+        await interaction.response.send_message("Deletion cancelled.", ephemeral=True)
 
 
 # ── Pagination view for /deadline list ───────────────────────────────────────
@@ -180,7 +178,9 @@ class DeadlineListView(discord.ui.View):
         self._member_map = member_map
         self._sync_enabled = sync_enabled
         self._page = 0
-        self._total_pages = max(1, (len(deadlines) + self.PAGE_SIZE - 1) // self.PAGE_SIZE)
+        self._total_pages = max(
+            1, (len(deadlines) + self.PAGE_SIZE - 1) // self.PAGE_SIZE
+        )
         self._update_buttons()
 
     def _update_buttons(self) -> None:
@@ -341,23 +341,18 @@ class DeadlinesCog(commands.Cog, name="Deadlines"):
             sync_enabled=self._settings.calendar_sync_enabled,
             title_prefix="Created: ",
         )
-        await interaction.response.send_message(embed=embed)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     # ── /deadline list ────────────────────────────────────────────────────────
 
-    @deadline_group.command(name="list", description="List upcoming deadlines")
-    @has_allowed_role()
-    @app_commands.describe(
-        mine="Only show deadlines assigned to you",
-        days="Only show deadlines due within this many days",
-    )
-    async def deadline_list(
+    async def _send_deadline_list(
         self,
         interaction: discord.Interaction,
-        mine: bool = False,
-        days: int | None = None,
+        days: int | None,
+        ephemeral: bool,
     ) -> None:
-        user_id = interaction.user.id if mine else None
+        """Fetch and send the invoking user's deadline list."""
+        user_id = interaction.user.id
         deadlines = await get_upcoming_deadlines(days=days, user_id=user_id)
 
         # Fetch members for all deadlines in a single pass
@@ -371,13 +366,41 @@ class DeadlinesCog(commands.Cog, name="Deadlines"):
         embed = view.build_embed()
 
         if len(deadlines) <= DeadlineListView.PAGE_SIZE:
-            # No pagination needed
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+            await interaction.response.send_message(embed=embed, ephemeral=ephemeral)
         else:
-            msg = await interaction.response.send_message(
-                embed=embed, view=view, ephemeral=True
+            await interaction.response.send_message(
+                embed=embed, view=view, ephemeral=ephemeral
             )
             view.message = await interaction.original_response()  # type: ignore[attr-defined]
+
+    @deadline_group.command(
+        name="list", description="List your upcoming deadlines (only visible to you)"
+    )
+    @has_allowed_role()
+    @app_commands.describe(
+        days="Only show deadlines due within this many days",
+    )
+    async def deadline_list(
+        self,
+        interaction: discord.Interaction,
+        days: int | None = None,
+    ) -> None:
+        await self._send_deadline_list(interaction, days=days, ephemeral=True)
+
+    @deadline_group.command(
+        name="show-everyone",
+        description="Share your upcoming deadlines with the channel",
+    )
+    @has_allowed_role()
+    @app_commands.describe(
+        days="Only show deadlines due within this many days",
+    )
+    async def deadline_show_everyone(
+        self,
+        interaction: discord.Interaction,
+        days: int | None = None,
+    ) -> None:
+        await self._send_deadline_list(interaction, days=days, ephemeral=False)
 
     # ── /deadline info ────────────────────────────────────────────────────────
 
@@ -489,7 +512,9 @@ class DeadlinesCog(commands.Cog, name="Deadlines"):
 
     # ── /deadline assign ──────────────────────────────────────────────────────
 
-    @deadline_group.command(name="assign", description="Add or remove members from a deadline")
+    @deadline_group.command(
+        name="assign", description="Add or remove members from a deadline"
+    )
     @has_allowed_role()
     @app_commands.describe(
         title="Deadline title",
