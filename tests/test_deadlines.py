@@ -321,18 +321,54 @@ async def test_list_always_filters_by_invoking_user(db_session, mock_interaction
 async def test_info_found(db_session, mock_interaction):
     cog = _make_cog()
     dl = await _seed_deadline(db_session, title="Info Test")
+    mock_interaction.user.id = 123456789
+    assigned_member = MagicMock()
+    assigned_member.user_id = 123456789
 
     with (
         patch.object(
             deadlines_module, "get_deadline_by_title", new=AsyncMock(return_value=dl)
         ),
         patch.object(
-            deadlines_module, "get_deadline_members", new=AsyncMock(return_value=[])
+            deadlines_module,
+            "get_deadline_members",
+            new=AsyncMock(return_value=[assigned_member]),
         ),
     ):
         await cog.deadline_info.callback(cog, mock_interaction, title="Info Test")
 
     mock_interaction.response.send_message.assert_called_once()
+    assert (
+        mock_interaction.response.send_message.call_args.kwargs.get("ephemeral") is True
+    )
+
+
+async def test_info_not_assigned_replies_ephemeral(db_session, mock_interaction):
+    """User can't see info for a deadline they're not assigned to."""
+    cog = _make_cog()
+    dl = await _seed_deadline(db_session, title="Other Deadline")
+    mock_interaction.user.id = 999  # different user
+
+    other_member = MagicMock()
+    other_member.user_id = 1  # assigned to user 1, not 999
+
+    with (
+        patch.object(
+            deadlines_module, "get_deadline_by_title", new=AsyncMock(return_value=dl)
+        ),
+        patch.object(
+            deadlines_module,
+            "get_deadline_members",
+            new=AsyncMock(return_value=[other_member]),
+        ),
+    ):
+        await cog.deadline_info.callback(cog, mock_interaction, title="Other Deadline")
+
+    assert (
+        mock_interaction.response.send_message.call_args.kwargs.get("ephemeral") is True
+    )
+    # Should get a "not found" style response, not the embed
+    assert "embed" not in mock_interaction.response.send_message.call_args.kwargs
 
 
 async def test_info_not_found(db_session, mock_interaction):

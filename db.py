@@ -90,16 +90,20 @@ async def get_deadline_members(deadline_id: int) -> list[DeadlineMember]:
         return list(result.all())
 
 
-async def autocomplete_titles(prefix: str) -> list[str]:
+async def autocomplete_titles(prefix: str, user_id: int | None = None) -> list[str]:
     """
     Return up to 25 deadline titles that start with *prefix* (case-insensitive),
     sorted alphabetically. Used for slash command autocomplete.
+
+    If *user_id* is given, only titles for deadlines the user is assigned to
+    are returned.
     """
     async with get_session() as session:
-        result = await session.exec(
-            select(Deadline.title)
-            .where(Deadline.title.istartswith(prefix))  # type: ignore[union-attr]
-            .order_by(Deadline.title)
-            .limit(25)
+        stmt = (
+            select(Deadline.title).where(Deadline.title.istartswith(prefix))  # type: ignore[union-attr]
         )
+        if user_id is not None:
+            stmt = stmt.join(DeadlineMember).where(DeadlineMember.user_id == user_id)
+        stmt = stmt.order_by(Deadline.title).limit(25)
+        result = await session.exec(stmt)
         return list(result.all())

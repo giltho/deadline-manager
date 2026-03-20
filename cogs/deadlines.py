@@ -254,7 +254,7 @@ class DeadlinesCog(commands.Cog, name="Deadlines"):
         interaction: discord.Interaction,
         current: str,
     ) -> list[app_commands.Choice[str]]:
-        titles = await autocomplete_titles(current)
+        titles = await autocomplete_titles(current, user_id=interaction.user.id)
         return [app_commands.Choice(name=t, value=t) for t in titles]
 
     # ── /deadline group ───────────────────────────────────────────────────────
@@ -444,6 +444,12 @@ class DeadlinesCog(commands.Cog, name="Deadlines"):
             return
 
         members = await get_deadline_members(deadline.id)  # type: ignore[arg-type]
+        if not any(m.user_id == interaction.user.id for m in members):
+            await interaction.response.send_message(
+                f"No deadline found with title **{title}**.", ephemeral=True
+            )
+            return
+
         embed = _build_deadline_embed(
             deadline,
             members,

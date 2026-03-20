@@ -187,3 +187,27 @@ async def test_autocomplete_titles_empty_prefix(db_session):
         results = await db_module.autocomplete_titles("")
         # All three titles start with ""
         assert len(results) >= 2  # at least the future ones, possibly Past too
+
+
+async def test_autocomplete_titles_user_filter(db_session):
+    import db as db_module
+
+    await _seed(db_session)
+
+    with patch.object(
+        db_module,
+        "get_session",
+        return_value=_make_session_ctx(db_session),
+    ):
+        # User 99 is only assigned to "Near"
+        results = await db_module.autocomplete_titles("", user_id=99)
+        assert results == ["Near"]
+
+    with patch.object(
+        db_module,
+        "get_session",
+        return_value=_make_session_ctx(db_session),
+    ):
+        # User 1 is assigned to nothing, so no results
+        results = await db_module.autocomplete_titles("", user_id=1)
+        assert results == []
