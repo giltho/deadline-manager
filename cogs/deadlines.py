@@ -256,6 +256,65 @@ class DeadlinesCog(commands.Cog, name="Deadlines"):
 
     deadline_group = app_commands.Group(name="deadline", description="Manage deadlines")
 
+    # ── /deadline help ────────────────────────────────────────────────────────
+
+    @deadline_group.command(name="help", description="How to use the deadline bot")
+    async def deadline_help(self, interaction: discord.Interaction) -> None:
+        embed = discord.Embed(
+            title="Deadline Manager — Quick Guide",
+            colour=COLOUR_BLUE,
+        )
+        embed.add_field(
+            name="Privacy",
+            value=(
+                "All deadline interactions are **private by default** — "
+                "only you can see the bot's replies. "
+                "Deadlines you are assigned to are visible only to you; "
+                "others cannot see or search them."
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="Creating a deadline",
+            value=(
+                "`/deadline add title: … due_date: … [members: @mentions] [description: …]`\n"  # noqa: E501
+                "Creates a new deadline. If you omit `members` it is assigned to you alone. "  # noqa: E501
+                "Date formats like `2026-06-15` or `15 Jun 2026 17:00` are both accepted."  # noqa: E501
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="Viewing your deadlines",
+            value=(
+                "`/deadline list [days: N]` — lists all upcoming deadlines you are assigned to, "  # noqa: E501
+                "sorted by due date. Add `days:` to limit to the next N days.\n"
+                "`/deadline info title: …` — shows full details for a single deadline."
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="Sharing with the channel",
+            value=(
+                "`/deadline show-everyone [days: N] [title: …]` — posts your deadlines publicly. "  # noqa: E501
+                "Pass a `title:` to share just one deadline, or omit it to share the full list."  # noqa: E501
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="Editing & managing",
+            value=(
+                "`/deadline edit title: … [new_title:] [due_date:] [description:]` — update fields.\n"  # noqa: E501
+                "`/deadline assign title: … [add: @mentions] [remove: @mentions]` — change who is assigned.\n"  # noqa: E501
+                "`/deadline delete title: …` — permanently delete (requires confirmation).\n"  # noqa: E501
+                "Anyone assigned to a deadline can edit or delete it."
+            ),
+            inline=False,
+        )
+        embed.set_footer(
+            text="All title fields support autocomplete — start typing to search."
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
     # ── /deadline add ─────────────────────────────────────────────────────────
 
     @deadline_group.command(name="add", description="Create a new deadline")
