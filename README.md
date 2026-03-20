@@ -5,6 +5,7 @@ A Discord bot for research group deadline management. Members with designated ro
 ## Features
 
 - Slash commands for creating, editing, listing, and deleting deadlines
+- User-scoped privacy: you only see deadlines you are assigned to — others cannot access them
 - Assign/unassign Discord members to specific deadlines
 - Automatic reminders posted to a configured channel at 14, 7, and 3 days before the due date
 - Reminders survive restarts — all future jobs are rescheduled on startup
@@ -20,14 +21,20 @@ All commands are guild-scoped slash commands under the `/deadline` group.
 
 | Command | Description |
 |---|---|
+| `/deadline help` | Show a usage guide (only visible to you) |
 | `/deadline add` | Create a new deadline |
-| `/deadline list` | List upcoming deadlines (paginated, 10 per page) |
+| `/deadline list` | List your upcoming deadlines (paginated, 10 per page) |
 | `/deadline info` | Show full details for a deadline |
 | `/deadline edit` | Update title, due date, or description |
 | `/deadline assign` | Add or remove assigned members |
 | `/deadline delete` | Delete a deadline (confirmation required) |
+| `/deadline show-everyone` | Post your deadlines publicly in the channel |
 
-All `title` parameters support autocomplete.
+All `title` parameters support autocomplete, filtered to your own deadlines.
+
+### Privacy model
+
+All bot replies are **ephemeral** (visible only to you) except `/deadline show-everyone`. Deadline data is user-scoped at the database layer — autocomplete, list, info, edit, assign, and delete all enforce that you must be assigned to a deadline before you can see or modify it.
 
 ## Tech Stack
 
@@ -38,6 +45,7 @@ All `title` parameters support autocomplete.
 - [python-dateutil](https://dateutil.readthedocs.io/) — flexible date parsing
 - [uv](https://docs.astral.sh/uv/) — package and environment management
 - [ruff](https://docs.astral.sh/ruff/) — linting and formatting
+- [ty](https://docs.astral.sh/ty/) — type checking
 
 ## Local Development
 
@@ -80,11 +88,12 @@ With coverage:
 uv run pytest --cov
 ```
 
-### Linting and formatting
+### Linting, formatting, and type-checking
 
 ```bash
 uv run ruff check .
 uv run ruff format .
+uv run ty check
 ```
 
 ## Configuration
@@ -104,7 +113,7 @@ All configuration is via environment variables (or a `.env` file at the project 
 
 ### Getting the required IDs
 
-**Bot token** — Create an application at [discord.com/developers/applications](https://discord.com/developers/applications), add a Bot, and copy the token. Enable the **Server Members Intent** under the bot's Privileged Gateway Intents.
+**Bot token** — Create an application at [discord.com/developers/applications](https://discord.com/developers/applications), add a Bot, and copy the token.
 
 **Guild, role, and channel IDs** — Enable Developer Mode in Discord (Settings → Advanced → Developer Mode), then right-click any server, role, or channel and select "Copy ID".
 
@@ -129,9 +138,9 @@ The project includes a multi-stage `Dockerfile` ready for [Railway](https://rail
    REMINDER_CHANNEL_ID=...
    ```
 
-4. Railway will build the Docker image and start the bot automatically. The SQLite database file (`deadlines.db`) is written to the `/app` working directory inside the container.
+4. Attach a [Railway Volume](https://docs.railway.app/reference/volumes) at `/data` to persist the SQLite database across deploys. The bot reads `RAILWAY_VOLUME_MOUNT_PATH` automatically.
 
-> **Note on persistence:** Railway's filesystem is ephemeral by default — the database will be lost on redeploy. To persist data, attach a [Railway Volume](https://docs.railway.app/reference/volumes) and set the database path via an environment variable, or migrate to a hosted Postgres/SQLite-compatible service.
+5. Railway will build the Docker image and start the bot automatically.
 
 ### Deploying with the Railway CLI
 
@@ -144,7 +153,7 @@ railway login
 railway link
 
 # Deploy
-railway up
+railway up --detach
 ```
 
 ## Microsoft Graph Calendar Sync (Optional)
@@ -153,7 +162,7 @@ Calendar sync is stubbed in `calendar_sync.py` and wired into all command handle
 
 To implement sync:
 
-1. Register an application in the [Azure Portal](https://portal.azure.com) and grant it the `Calendars.ReadWrite` application permission (or delegated, depending on your setup).
+1. Register an application in the [Azure Portal](https://portal.azure.com) and grant it the `Calendars.ReadWrite` application permission.
 2. Fill in the four `MS_*` environment variables.
 3. Implement the methods in `calendar_sync.py` — the stubs document the expected behaviour.
 4. Uncomment the `calendar_sync TODO:` blocks in `cogs/deadlines.py`.
@@ -162,16 +171,16 @@ To implement sync:
 
 ```
 deadline-manager/
-├── bot.py              # Entry point; bot setup and error handling
-├── config.py           # pydantic-settings config with parsed_role_ids property
+├── bot.py              # Entry point; bot setup and cog loading
+├── config.py           # pydantic-settings config; parsed_role_ids property
 ├── models.py           # SQLModel table definitions (Deadline, DeadlineMember)
-├── db.py               # Async database engine and query helpers
+├── db.py               # Async DB engine, DeadlineAccess class, module-level helpers
 ├── checks.py           # has_allowed_role() app_commands check decorator
 ├── calendar_sync.py    # Microsoft Graph client stub
 ├── cogs/
-│   ├── deadlines.py    # All six /deadline slash commands
+│   ├── deadlines.py    # All /deadline slash commands
 │   └── reminders.py    # APScheduler-based reminder cog
-├── tests/              # pytest test suite (68 tests)
+├── tests/              # pytest test suite (86 tests)
 ├── Dockerfile          # Multi-stage Railway-ready build
 ├── pyproject.toml      # uv project, dependencies, ruff and pytest config
 └── .env.example        # Template for required environment variables
