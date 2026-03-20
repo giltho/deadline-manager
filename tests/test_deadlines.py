@@ -38,6 +38,14 @@ def test_parse_due_date_iso():
     assert result.day == 15
 
 
+def test_parse_due_date_iso_not_dayfirst():
+    # Regression: 2026-07-09 must be July 9, not September 7.
+    result = _parse_due_date("2026-07-09")
+    assert result is not None
+    assert result.month == 7
+    assert result.day == 9
+
+
 def test_parse_due_date_natural():
     result = _parse_due_date("15 Jun 2026 17:00")
     assert result is not None

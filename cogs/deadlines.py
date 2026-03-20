@@ -59,9 +59,13 @@ def _deadline_colour(days: int) -> discord.Colour:
 
 
 def _parse_due_date(raw: str) -> datetime | None:
-    """Parse a flexible date string into a naive UTC datetime, or return None."""
+    """Parse a flexible date string into a naive UTC datetime, or return None.
+
+    yearfirst=True ensures ISO dates like 2026-07-09 are read as YYYY-MM-DD
+    rather than being misinterpreted when dayfirst would swap month and day.
+    """
     try:
-        dt = dateutil_parser.parse(raw, dayfirst=True)
+        dt = dateutil_parser.parse(raw, yearfirst=True)
         # If no timezone info, treat as UTC
         if dt.tzinfo is not None:
             dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
