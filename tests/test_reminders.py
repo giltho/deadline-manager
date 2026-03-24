@@ -106,30 +106,22 @@ def test_reschedule_replaces_existing_jobs():
         assert call.kwargs.get("replace_existing") is True
 
 
-async def test_send_reminder_posts_to_channel(mocker):
+async def test_send_reminder_dms_each_member(mocker):
+    """_send_reminder sends a private DM to every assigned member."""
     from cogs.reminders import RemindersCog
 
     bot = MagicMock()
-    mock_channel = AsyncMock(spec=["send"])
-    mock_channel.send = AsyncMock()
-    bot.get_channel = MagicMock(return_value=mock_channel)
+    mock_user = AsyncMock()
+    mock_user.send = AsyncMock()
+    bot.fetch_user = AsyncMock(return_value=mock_user)
 
     cog = RemindersCog(bot)
     cog.scheduler = MagicMock()
 
-    mock_settings = MagicMock()
-    mock_settings.reminder_channel_id = 999
-
-    mocker.patch("cogs.reminders.get_settings", return_value=mock_settings)
     mocker.patch(
         "cogs.reminders.get_deadline_members",
-        new=AsyncMock(return_value=[MagicMock(user_id=42)]),
+        new=AsyncMock(return_value=[MagicMock(user_id=42), MagicMock(user_id=99)]),
     )
-
-    import discord
-
-    bot.get_channel.return_value = MagicMock(spec=discord.TextChannel)
-    bot.get_channel.return_value.send = AsyncMock()
 
     await cog._send_reminder(
         deadline_id=1,
@@ -139,31 +131,36 @@ async def test_send_reminder_posts_to_channel(mocker):
         days_before=7,
     )
 
-    bot.get_channel.return_value.send.assert_called_once()
-    call_args = bot.get_channel.return_value.send.call_args[0][0]
-    assert "My Deadline" in call_args
-    assert "7 days" in call_args
-    assert "Some notes" in call_args
+    # fetch_user called once per member
+    assert bot.fetch_user.call_count == 2
+    # user.send called once per member
+    assert mock_user.send.call_count == 2
+
+    # Message content is correct
+    sent_msg = mock_user.send.call_args[0][0]
+    assert "My Deadline" in sent_msg
+    assert "7 days" in sent_msg
+    assert "Some notes" in sent_msg
 
 
-async def test_send_reminder_no_channel_logs_error(mocker, caplog):
+async def test_send_reminder_no_members_skips(mocker, caplog):
+    """_send_reminder is a no-op when no members are assigned."""
     import logging
 
     from cogs.reminders import RemindersCog
 
     bot = MagicMock()
-    bot.get_channel = MagicMock(return_value=None)
+    bot.fetch_user = AsyncMock()
 
     cog = RemindersCog(bot)
     cog.scheduler = MagicMock()
 
-    mock_settings = MagicMock()
-    mock_settings.reminder_channel_id = 999
+    mocker.patch(
+        "cogs.reminders.get_deadline_members",
+        new=AsyncMock(return_value=[]),
+    )
 
-    mocker.patch("cogs.reminders.get_settings", return_value=mock_settings)
-    mocker.patch("cogs.reminders.get_deadline_members", new=AsyncMock(return_value=[]))
-
-    with caplog.at_level(logging.ERROR, logger="cogs.reminders"):
+    with caplog.at_level(logging.INFO, logger="cogs.reminders"):
         await cog._send_reminder(
             deadline_id=1,
             deadline_title="Test",
@@ -172,4 +169,45 @@ async def test_send_reminder_no_channel_logs_error(mocker, caplog):
             days_before=3,
         )
 
-    assert any("not found" in r.message for r in caplog.records)
+    bot.fetch_user.assert_not_called()
+
+
+async def test_send_reminder_forbidden_logs_warning(mocker, caplog):
+    """If a user has DMs disabled, a warning is logged and other
+    members still get DMs."""
+    import logging
+
+    import discord as discord_lib
+
+    from cogs.reminders import RemindersCog
+
+    bot = MagicMock()
+    # First user has DMs disabled; second user is fine
+    forbidden_user = AsyncMock()
+    forbidden_user.send = AsyncMock(
+        side_effect=discord_lib.Forbidden(MagicMock(status=403), "Cannot send")
+    )
+    ok_user = AsyncMock()
+    ok_user.send = AsyncMock()
+    bot.fetch_user = AsyncMock(side_effect=[forbidden_user, ok_user])
+
+    cog = RemindersCog(bot)
+    cog.scheduler = MagicMock()
+
+    mocker.patch(
+        "cogs.reminders.get_deadline_members",
+        new=AsyncMock(return_value=[MagicMock(user_id=10), MagicMock(user_id=20)]),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="cogs.reminders"):
+        await cog._send_reminder(
+            deadline_id=1,
+            deadline_title="Test",
+            deadline_description=None,
+            due_date=datetime.now(UTC).replace(tzinfo=None) + timedelta(days=3),
+            days_before=3,
+        )
+
+    assert any("Cannot DM" in r.message for r in caplog.records)
+    # Second user still received the DM
+    ok_user.send.assert_called_once()

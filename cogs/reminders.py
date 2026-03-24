@@ -3,6 +3,9 @@ Reminders cog — schedules and dispatches deadline reminder messages.
 
 Jobs are keyed as `reminder_{deadline_id}_{offset}` (e.g. `reminder_42_14d`)
 so they can be cleanly replaced when a deadline is edited or rescheduled.
+
+Reminders are sent as private DMs to each assigned user, so only the people
+who are assigned to a deadline receive its reminders.
 """
 
 from __future__ import annotations
@@ -15,7 +18,6 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.date import DateTrigger
 from discord.ext import commands
 
-from config import get_settings
 from db import get_all_future_deadlines, get_deadline_members
 from models import Deadline
 
@@ -111,28 +113,14 @@ class RemindersCog(commands.Cog, name="Reminders"):
         due_date: datetime,
         days_before: int,
     ) -> None:
-        """Send the reminder message to REMINDER_CHANNEL_ID."""
-        settings = get_settings()
-        channel = self.bot.get_channel(settings.reminder_channel_id)
-
-        if channel is None:
-            logger.error(
-                "Reminder channel %d not found; cannot send reminder for '%s'.",
-                settings.reminder_channel_id,
+        """DM each assigned user a private reminder for their deadline."""
+        members = await get_deadline_members(deadline_id)
+        if not members:
+            logger.info(
+                "No members assigned to deadline '%s'; skipping reminder.",
                 deadline_title,
             )
             return
-
-        if not isinstance(channel, discord.TextChannel):
-            logger.error(
-                "Reminder channel %d is not a text channel.",
-                settings.reminder_channel_id,
-            )
-            return
-
-        # Fetch assigned members
-        members = await get_deadline_members(deadline_id)
-        mentions = " ".join(f"<@{m.user_id}>" for m in members)
 
         # Discord timestamp: <t:UNIX:F> renders in each user's local timezone
         unix_ts = int(due_date.replace(tzinfo=UTC).timestamp())
@@ -142,15 +130,33 @@ class RemindersCog(commands.Cog, name="Reminders"):
             f"\u23f0  Reminder: **{deadline_title}** is due in "
             f"{days_before} days ({timestamp_str})",
         ]
-        if mentions:
-            lines.append(mentions)
         if deadline_description:
             lines.append(deadline_description)
+        message = "\n".join(lines)
 
-        await channel.send("\n".join(lines))
-        logger.info(
-            "Sent %d-day reminder for deadline '%s'.", days_before, deadline_title
-        )
+        for member in members:
+            try:
+                user = await self.bot.fetch_user(member.user_id)
+                await user.send(message)
+                logger.info(
+                    "Sent %d-day reminder for '%s' to user %d.",
+                    days_before,
+                    deadline_title,
+                    member.user_id,
+                )
+            except discord.Forbidden:
+                logger.warning(
+                    "Cannot DM user %d (DMs disabled); skipping reminder for '%s'.",
+                    member.user_id,
+                    deadline_title,
+                )
+            except discord.HTTPException as exc:
+                logger.error(
+                    "Failed to DM user %d for reminder '%s': %s",
+                    member.user_id,
+                    deadline_title,
+                    exc,
+                )
 
 
 async def setup(bot: commands.Bot) -> None:
