@@ -6,28 +6,26 @@ from discord.app_commands import CheckFailure, check
 from config import get_settings
 
 
-def has_allowed_role():
+def in_deadline_channel():
     """
-    app_commands.check decorator that restricts a command to members holding
-    at least one role whose ID is in ALLOWED_ROLE_IDS.
+    app_commands.check decorator that restricts a command to the configured
+    deadline channel (DEADLINE_CHANNEL_ID).
+
+    Replies with an ephemeral error when invoked from the wrong channel.
 
     Usage:
-        @has_allowed_role()
+        @in_deadline_channel()
         async def my_command(self, interaction: Interaction) -> None:
             ...
     """
 
     async def predicate(interaction: Interaction) -> bool:
         settings = get_settings()
-        allowed = set(settings.parsed_role_ids)
-
-        member = interaction.user
-        # In a guild context interaction.user is a Member with .roles
-        user_role_ids = {role.id for role in getattr(member, "roles", [])}
-
-        if user_role_ids & allowed:
+        if interaction.channel_id == settings.deadline_channel_id:
             return True
 
-        raise CheckFailure("You don't have permission to use this command.")
+        raise CheckFailure(
+            f"This command can only be used in <#{settings.deadline_channel_id}>."
+        )
 
     return check(predicate)

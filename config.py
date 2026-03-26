@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -16,8 +15,7 @@ class Settings(BaseSettings):
     # ── Discord ───────────────────────────────────────────────────────────────
     discord_token: str
     discord_guild_id: int
-    # Stored as a comma-separated string in the env; parsed by validator below.
-    allowed_role_ids: str
+    deadline_channel_id: int
     reminder_channel_id: int
 
     # ── Microsoft Graph (all optional — omit to disable calendar sync) ────────
@@ -26,22 +24,6 @@ class Settings(BaseSettings):
     ms_client_id: str | None = None
     ms_client_secret: str | None = None
     ms_calendar_id: str | None = None  # target mailbox / shared calendar
-
-    @field_validator("allowed_role_ids", mode="before")
-    @classmethod
-    def parse_role_ids(cls, v: object) -> str:
-        """Accept a list (from code) or raw string (from env).
-
-        Normalises the value to a CSV string.
-        """
-        if isinstance(v, (list, tuple)):
-            return ",".join(str(x) for x in v)
-        return str(v)
-
-    @property
-    def parsed_role_ids(self) -> list[int]:
-        """Return ALLOWED_ROLE_IDS as a list of ints."""
-        return [int(r.strip()) for r in self.allowed_role_ids.split(",") if r.strip()]
 
     @property
     def calendar_sync_enabled(self) -> bool:

@@ -215,7 +215,7 @@ def _make_cog(bot=None):
         bot = MagicMock()
         bot.cogs = {}
     mock_settings = MagicMock()
-    mock_settings.allowed_role_ids = [999]
+    mock_settings.deadline_channel_id = 777
     mock_settings.reminder_channel_id = 1
     mock_settings.calendar_sync_enabled = False
 

@@ -46,7 +46,7 @@ def mock_settings_no_calendar():
     settings = MagicMock()
     settings.discord_token = "test-token"
     settings.discord_guild_id = 111111111111111111
-    settings.allowed_role_ids = [999]
+    settings.deadline_channel_id = 333333333333333333
     settings.reminder_channel_id = 222222222222222222
     settings.calendar_sync_enabled = False
     settings.ms_tenant_id = None

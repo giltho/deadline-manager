@@ -24,7 +24,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from calendar_sync import SYNC_FAILED, make_calendar_client
-from checks import has_allowed_role
+from checks import in_deadline_channel
 from config import get_settings
 from db import DeadlineAccess, _get_deadline_by_title, get_deadline_members, get_session
 from discord_utils import notify_users, send_dm
@@ -432,7 +432,7 @@ class DeadlinesCog(commands.Cog, name="Deadlines"):
     # ── /deadline add ─────────────────────────────────────────────────────────
 
     @deadline_group.command(name="add", description="Create a new deadline")
-    @has_allowed_role()
+    @in_deadline_channel()
     @app_commands.describe(
         title="Short name for the deadline",
         due_date=(
@@ -547,7 +547,7 @@ class DeadlinesCog(commands.Cog, name="Deadlines"):
     @deadline_group.command(
         name="list", description="List your upcoming deadlines (only visible to you)"
     )
-    @has_allowed_role()
+    @in_deadline_channel()
     @app_commands.describe(
         days="Only show deadlines due within this many days",
     )
@@ -562,7 +562,7 @@ class DeadlinesCog(commands.Cog, name="Deadlines"):
         name="show-everyone",
         description="Share your upcoming deadlines with the channel",
     )
-    @has_allowed_role()
+    @in_deadline_channel()
     @app_commands.describe(
         days="Only show deadlines due within this many days",
         title="Share a single deadline by name (optional)",
@@ -595,7 +595,7 @@ class DeadlinesCog(commands.Cog, name="Deadlines"):
     # ── /deadline info ────────────────────────────────────────────────────────
 
     @deadline_group.command(name="info", description="Show full details for a deadline")
-    @has_allowed_role()
+    @in_deadline_channel()
     @app_commands.describe(title="Deadline title")
     @app_commands.autocomplete(title=_title_autocomplete)
     async def deadline_info(
@@ -625,7 +625,7 @@ class DeadlinesCog(commands.Cog, name="Deadlines"):
     # ── /deadline edit ────────────────────────────────────────────────────────
 
     @deadline_group.command(name="edit", description="Edit an existing deadline")
-    @has_allowed_role()
+    @in_deadline_channel()
     @app_commands.describe(
         title="Deadline to edit",
         new_title="New title",
@@ -718,7 +718,7 @@ class DeadlinesCog(commands.Cog, name="Deadlines"):
     @deadline_group.command(
         name="assign", description="Add or remove members from a deadline"
     )
-    @has_allowed_role()
+    @in_deadline_channel()
     @app_commands.describe(
         title="Deadline title",
         add="@mentions to add",
@@ -790,7 +790,7 @@ class DeadlinesCog(commands.Cog, name="Deadlines"):
     # ── /deadline delete ──────────────────────────────────────────────────────
 
     @deadline_group.command(name="delete", description="Delete a deadline")
-    @has_allowed_role()
+    @in_deadline_channel()
     @app_commands.describe(title="Deadline to delete")
     @app_commands.autocomplete(title=_title_autocomplete)
     async def deadline_delete(

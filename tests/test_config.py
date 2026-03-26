@@ -13,7 +13,7 @@ def _make_settings(monkeypatch, extra: dict | None = None):
     base = {
         "DISCORD_TOKEN": "tok",
         "DISCORD_GUILD_ID": "111",
-        "ALLOWED_ROLE_IDS": "100,200,300",
+        "DEADLINE_CHANNEL_ID": "777",
         "REMINDER_CHANNEL_ID": "999",
     }
     # Clear optional MS_* vars so they don't bleed in from a real .env
@@ -28,7 +28,7 @@ def test_valid_settings(monkeypatch):
     s = _make_settings(monkeypatch)
     assert s.discord_token == "tok"
     assert s.discord_guild_id == 111
-    assert s.parsed_role_ids == [100, 200, 300]
+    assert s.deadline_channel_id == 777
     assert s.reminder_channel_id == 999
 
 
@@ -36,7 +36,7 @@ def test_missing_required_fields(monkeypatch):
     keys = (
         "DISCORD_TOKEN",
         "DISCORD_GUILD_ID",
-        "ALLOWED_ROLE_IDS",
+        "DEADLINE_CHANNEL_ID",
         "REMINDER_CHANNEL_ID",
     )
     for key in keys:
@@ -62,13 +62,3 @@ def test_calendar_sync_enabled_when_ms_vars_present(monkeypatch):
         },
     )
     assert s.calendar_sync_enabled is True
-
-
-def test_allowed_role_ids_single_value(monkeypatch):
-    s = _make_settings(monkeypatch, extra={"ALLOWED_ROLE_IDS": "42"})
-    assert s.parsed_role_ids == [42]
-
-
-def test_allowed_role_ids_strips_whitespace(monkeypatch):
-    s = _make_settings(monkeypatch, extra={"ALLOWED_ROLE_IDS": " 10 , 20 , 30 "})
-    assert s.parsed_role_ids == [10, 20, 30]
