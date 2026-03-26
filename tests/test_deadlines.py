@@ -621,3 +621,50 @@ async def test_do_delete_removes_from_db(db_session, mock_interaction):
         sql_select(Deadline).where(Deadline.title == "Delete Me")
     )
     assert result.first() is None
+
+
+# /deadline test-dms ───────────────────────────────────────────────────────────
+
+
+async def test_test_dms_sent(mock_interaction):
+    """When send_dm returns 'sent', reply contains a success message."""
+    cog = _make_cog()
+    mock_interaction.user.id = 123
+
+    with patch.object(deadlines_module, "send_dm", new=AsyncMock(return_value="sent")):
+        await cog.deadline_test_dms.callback(cog, mock_interaction)
+
+    mock_interaction.response.send_message.assert_called_once()
+    call_kwargs = mock_interaction.response.send_message.call_args
+    assert call_kwargs.kwargs.get("ephemeral") is True
+    assert "working" in call_kwargs.args[0].lower()
+
+
+async def test_test_dms_forbidden(mock_interaction):
+    """When send_dm returns 'forbidden', reply tells user DMs are disabled."""
+    cog = _make_cog()
+    mock_interaction.user.id = 123
+
+    with patch.object(
+        deadlines_module, "send_dm", new=AsyncMock(return_value="forbidden")
+    ):
+        await cog.deadline_test_dms.callback(cog, mock_interaction)
+
+    mock_interaction.response.send_message.assert_called_once()
+    call_kwargs = mock_interaction.response.send_message.call_args
+    assert call_kwargs.kwargs.get("ephemeral") is True
+    assert "disabled" in call_kwargs.args[0].lower()
+
+
+async def test_test_dms_error(mock_interaction):
+    """When send_dm returns 'error', reply indicates something went wrong."""
+    cog = _make_cog()
+    mock_interaction.user.id = 123
+
+    with patch.object(deadlines_module, "send_dm", new=AsyncMock(return_value="error")):
+        await cog.deadline_test_dms.callback(cog, mock_interaction)
+
+    mock_interaction.response.send_message.assert_called_once()
+    call_kwargs = mock_interaction.response.send_message.call_args
+    assert call_kwargs.kwargs.get("ephemeral") is True
+    assert "wrong" in call_kwargs.args[0].lower()

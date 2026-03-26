@@ -26,6 +26,7 @@ from calendar_sync import SYNC_FAILED, make_calendar_client
 from checks import has_allowed_role
 from config import get_settings
 from db import DeadlineAccess, _get_deadline_by_title, get_deadline_members, get_session
+from discord_utils import send_dm
 from models import Deadline, DeadlineMember
 
 logger = logging.getLogger(__name__)
@@ -314,6 +315,30 @@ class DeadlinesCog(commands.Cog, name="Deadlines"):
             text="All title fields support autocomplete — start typing to search."
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    # ── /deadline test-dms ────────────────────────────────────────────────────
+
+    @deadline_group.command(
+        name="test-dms",
+        description="Check whether the bot can DM you (required for reminders)",
+    )
+    async def deadline_test_dms(self, interaction: discord.Interaction) -> None:
+        result = await send_dm(
+            self.bot,
+            interaction.user.id,
+            "This is a test DM from the deadline bot. Your reminders are working!",
+        )
+        if result == "sent":
+            msg = "\u2705 DMs are working \u2014 you will receive deadline reminders."
+        elif result == "forbidden":
+            msg = (
+                "\u274c Your DMs are disabled. You will **not** receive deadline "
+                "reminders. Enable DMs from server members in your Discord privacy "
+                "settings."
+            )
+        else:
+            msg = "\u26a0\ufe0f Something went wrong trying to DM you."
+        await interaction.response.send_message(msg, ephemeral=True)
 
     # ── /deadline add ─────────────────────────────────────────────────────────
 

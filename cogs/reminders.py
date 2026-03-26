@@ -13,12 +13,12 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime, timedelta
 
-import discord
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.date import DateTrigger
 from discord.ext import commands
 
 from db import get_all_future_deadlines, get_deadline_members
+from discord_utils import send_dm
 from models import Deadline
 
 logger = logging.getLogger(__name__)
@@ -135,27 +135,20 @@ class RemindersCog(commands.Cog, name="Reminders"):
         message = "\n".join(lines)
 
         for member in members:
-            try:
-                user = await self.bot.fetch_user(member.user_id)
-                await user.send(message)
+            result = await send_dm(self.bot, member.user_id, message)
+            if result == "sent":
                 logger.info(
                     "Sent %d-day reminder for '%s' to user %d.",
                     days_before,
                     deadline_title,
                     member.user_id,
                 )
-            except discord.Forbidden:
-                logger.warning(
-                    "Cannot DM user %d (DMs disabled); skipping reminder for '%s'.",
-                    member.user_id,
+            else:
+                logger.info(
+                    "Reminder for '%s' not delivered to user %d: %s",
                     deadline_title,
-                )
-            except discord.HTTPException as exc:
-                logger.error(
-                    "Failed to DM user %d for reminder '%s': %s",
                     member.user_id,
-                    deadline_title,
-                    exc,
+                    result,
                 )
 
 
