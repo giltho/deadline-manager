@@ -21,6 +21,7 @@ from cogs.deadlines import (
     _days_remaining,
     _extract_user_ids,
     _parse_due_date,
+    _pending_reminder_times,
     _sync_status_label,
 )
 from models import Deadline, DeadlineMember
@@ -168,6 +169,37 @@ def test_sync_status_label_failed():
 def test_sync_status_label_synced():
     label = _sync_status_label("evt-abc123xyz", sync_enabled=True)
     assert "Synced" in label
+
+
+# ── _pending_reminder_times ───────────────────────────────────────────────────
+
+
+def test_pending_reminder_times_all_future():
+    # Due in 31 days: all five offsets (30, 14, 7, 3, 1) should be pending
+    now = datetime.now(UTC).replace(tzinfo=None)
+    due = now + timedelta(days=31)
+    pending = _pending_reminder_times(due, now)
+    assert len(pending) == 5
+    fire_times = [ft for _, ft in pending]
+    # Results are sorted ascending by fire time (30d fires first, 1d fires last)
+    assert fire_times == sorted(fire_times)
+    assert [d for d, _ in pending] == [30, 14, 7, 3, 1]
+
+
+def test_pending_reminder_times_partial():
+    # Due in 5 days: only 3d and 1d are still in the future
+    now = datetime.now(UTC).replace(tzinfo=None)
+    due = now + timedelta(days=5)
+    pending = _pending_reminder_times(due, now)
+    assert [d for d, _ in pending] == [3, 1]
+
+
+def test_pending_reminder_times_none_left():
+    # Overdue: no reminders pending
+    now = datetime.now(UTC).replace(tzinfo=None)
+    due = now - timedelta(days=1)
+    pending = _pending_reminder_times(due, now)
+    assert pending == []
 
 
 # ── Integration-style tests (DB + mocked interaction) ─────────────────────────
@@ -445,6 +477,57 @@ async def test_info_found(db_session, mock_interaction):
     assert (
         mock_interaction.response.send_message.call_args.kwargs.get("ephemeral") is True
     )
+
+
+async def test_info_includes_pending_reminders(db_session, mock_interaction):
+    """deadline_info embed includes an 'Upcoming reminders' field."""
+    cog = _make_cog()
+    # Due in 31 days: all 5 reminders are still pending
+    dl = await _seed_deadline(db_session, title="Reminder Test", days_ahead=31)
+    mock_interaction.user.id = 1
+
+    access = _make_access_mock(get_by_title=dl)
+
+    with (
+        patch.object(deadlines_module, "DeadlineAccess", return_value=access),
+        patch.object(
+            deadlines_module, "get_deadline_members", new=AsyncMock(return_value=[])
+        ),
+    ):
+        await cog.deadline_info.callback(cog, mock_interaction, title="Reminder Test")
+
+    embed = mock_interaction.response.send_message.call_args.kwargs["embed"]
+    field_names = [f.name for f in embed.fields]
+    assert "Upcoming reminders" in field_names
+    reminders_field = next(f for f in embed.fields if f.name == "Upcoming reminders")
+    # All five offsets should appear in the value
+    for days in ("30d", "14d", "7d", "3d", "1d"):
+        assert days in reminders_field.value
+
+
+async def test_info_no_pending_reminders_when_overdue(db_session, mock_interaction):
+    """When all reminders have fired, the field says so."""
+    cog = _make_cog()
+    # Due yesterday — all reminders have passed
+    dl = await _seed_deadline(db_session, title="Past Test", days_ahead=-1)
+    mock_interaction.user.id = 1
+
+    access = _make_access_mock(get_by_title=dl)
+
+    with (
+        patch.object(deadlines_module, "DeadlineAccess", return_value=access),
+        patch.object(
+            deadlines_module, "get_deadline_members", new=AsyncMock(return_value=[])
+        ),
+    ):
+        await cog.deadline_info.callback(cog, mock_interaction, title="Past Test")
+
+    embed = mock_interaction.response.send_message.call_args.kwargs["embed"]
+    reminders_field = next(
+        (f for f in embed.fields if f.name == "Upcoming reminders"), None
+    )
+    assert reminders_field is not None
+    assert "all reminders have been sent" in reminders_field.value.lower()
 
 
 async def test_info_not_assigned_replies_ephemeral(mock_interaction):

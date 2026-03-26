@@ -25,9 +25,11 @@ logger = logging.getLogger(__name__)
 
 # (label, days_before) pairs — order doesn't matter for scheduling
 REMINDER_OFFSETS: list[tuple[str, int]] = [
+    ("30d", 30),
     ("14d", 14),
     ("7d", 7),
     ("3d", 3),
+    ("1d", 1),
 ]
 
 
@@ -55,8 +57,9 @@ class RemindersCog(commands.Cog, name="Reminders"):
 
     def schedule_reminders(self, deadline: Deadline) -> None:
         """
-        Create (or replace) the three reminder jobs for *deadline*.
-        Jobs whose fire time has already passed are silently skipped.
+        Create (or replace) reminder jobs for *deadline* at 30, 14, 7, 3, and 1
+        day(s) before the due date. Jobs whose fire time has already passed are
+        silently skipped.
         """
         now = datetime.now(UTC)
 

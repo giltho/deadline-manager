@@ -23,23 +23,24 @@ def _make_reminders_cog():
 
 def test_schedule_reminders_creates_three_jobs():
     cog = _make_reminders_cog()
+    # Due in 31 days — all five offsets (30d, 14d, 7d, 3d, 1d) are in the future
     deadline = make_deadline(
         id=1,
-        due_date=datetime.now(UTC).replace(tzinfo=None) + timedelta(days=30),
+        due_date=datetime.now(UTC).replace(tzinfo=None) + timedelta(days=31),
     )
     cog.schedule_reminders(deadline)
-    assert cog.scheduler.add_job.call_count == 3
+    assert cog.scheduler.add_job.call_count == 5
 
 
 def test_schedule_reminders_skips_past_jobs():
     cog = _make_reminders_cog()
-    # Due in 5 days — 14d and 7d reminders are already past, only 3d remains
+    # Due in 5 days — 30d, 14d, and 7d reminders are already past; 3d and 1d remain
     deadline = make_deadline(
         id=2,
         due_date=datetime.now(UTC).replace(tzinfo=None) + timedelta(days=5),
     )
     cog.schedule_reminders(deadline)
-    assert cog.scheduler.add_job.call_count == 1
+    assert cog.scheduler.add_job.call_count == 2
 
 
 def test_schedule_reminders_skips_all_when_overdue():
@@ -56,7 +57,7 @@ def test_schedule_reminders_uses_replace_existing():
     cog = _make_reminders_cog()
     deadline = make_deadline(
         id=4,
-        due_date=datetime.now(UTC).replace(tzinfo=None) + timedelta(days=30),
+        due_date=datetime.now(UTC).replace(tzinfo=None) + timedelta(days=31),
     )
     cog.schedule_reminders(deadline)
     calls = cog.scheduler.add_job.call_args_list
@@ -68,19 +69,25 @@ def test_schedule_reminders_job_ids():
     cog = _make_reminders_cog()
     deadline = make_deadline(
         id=5,
-        due_date=datetime.now(UTC).replace(tzinfo=None) + timedelta(days=30),
+        due_date=datetime.now(UTC).replace(tzinfo=None) + timedelta(days=31),
     )
     cog.schedule_reminders(deadline)
     job_ids = {call.kwargs["id"] for call in cog.scheduler.add_job.call_args_list}
-    assert job_ids == {"reminder_5_14d", "reminder_5_7d", "reminder_5_3d"}
+    assert job_ids == {
+        "reminder_5_30d",
+        "reminder_5_14d",
+        "reminder_5_7d",
+        "reminder_5_3d",
+        "reminder_5_1d",
+    }
 
 
 def test_cancel_reminders_removes_existing_jobs():
     cog = _make_reminders_cog()
-    # Pretend all three jobs exist
+    # Pretend all five jobs exist
     cog.scheduler.get_job = MagicMock(return_value=MagicMock())
     cog.cancel_reminders(deadline_id=10)
-    assert cog.scheduler.remove_job.call_count == 3
+    assert cog.scheduler.remove_job.call_count == 5
 
 
 def test_cancel_reminders_skips_nonexistent_jobs():
@@ -96,7 +103,7 @@ def test_reschedule_replaces_existing_jobs():
     cog = _make_reminders_cog()
     deadline = make_deadline(
         id=6,
-        due_date=datetime.now(UTC).replace(tzinfo=None) + timedelta(days=30),
+        due_date=datetime.now(UTC).replace(tzinfo=None) + timedelta(days=31),
     )
     cog.schedule_reminders(deadline)
     cog.schedule_reminders(deadline)
@@ -172,11 +179,9 @@ async def test_send_reminder_no_members_skips(mocker, caplog):
     bot.fetch_user.assert_not_called()
 
 
-async def test_send_reminder_forbidden_logs_warning(mocker, caplog):
+async def test_send_reminder_forbidden_logs_warning(mocker):
     """If send_dm returns 'forbidden', a non-delivery info log is emitted and
     processing continues for the next member."""
-    import logging
-
     from cogs.reminders import RemindersCog
 
     bot = MagicMock()
@@ -192,17 +197,18 @@ async def test_send_reminder_forbidden_logs_warning(mocker, caplog):
         "cogs.reminders.send_dm",
         new=AsyncMock(side_effect=["forbidden", "sent"]),
     )
+    mock_logger = mocker.patch("cogs.reminders.logger")
 
-    with caplog.at_level(logging.INFO, logger="cogs.reminders"):
-        await cog._send_reminder(
-            deadline_id=1,
-            deadline_title="Test",
-            deadline_description=None,
-            due_date=datetime.now(UTC).replace(tzinfo=None) + timedelta(days=3),
-            days_before=3,
-        )
+    await cog._send_reminder(
+        deadline_id=1,
+        deadline_title="Test",
+        deadline_description=None,
+        due_date=datetime.now(UTC).replace(tzinfo=None) + timedelta(days=3),
+        days_before=3,
+    )
 
     # send_dm was called for both members
     assert mock_send_dm.call_count == 2
     # The cog logs non-delivery at INFO level
-    assert any("not delivered" in r.message for r in caplog.records)
+    info_messages = [call.args[0] for call in mock_logger.info.call_args_list]
+    assert any("not delivered" in msg for msg in info_messages)

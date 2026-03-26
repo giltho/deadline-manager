@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import discord
@@ -127,12 +127,32 @@ def _sync_status_label(outlook_event_id: str | None, sync_enabled: bool) -> str:
     return f"Synced (`{outlook_event_id[:12]}…`)"
 
 
+def _pending_reminder_times(
+    due_date: datetime, now: datetime
+) -> list[tuple[int, datetime]]:
+    """Return (days_before, fire_at) for each reminder that has not yet fired.
+
+    *due_date* and *now* must both be naive UTC datetimes.
+    Returned list is sorted by fire_at ascending.
+    """
+    from cogs.reminders import REMINDER_OFFSETS
+
+    results = []
+    for _label, days_before in REMINDER_OFFSETS:
+        fire_at = due_date - timedelta(days=days_before)
+        if fire_at > now:
+            results.append((days_before, fire_at))
+    results.sort(key=lambda x: x[1])
+    return results
+
+
 def _build_deadline_embed(
     deadline: Deadline,
     members: list[DeadlineMember],
     *,
     sync_enabled: bool,
     title_prefix: str = "",
+    pending_reminders: list[tuple[int, datetime]] | None = None,
 ) -> discord.Embed:
     days = _days_remaining(deadline.due_date)
     colour = _deadline_colour(days)
@@ -160,6 +180,17 @@ def _build_deadline_embed(
         value=_sync_status_label(deadline.outlook_event_id, sync_enabled),
         inline=True,
     )
+    if pending_reminders is not None:
+        if pending_reminders:
+            reminder_lines = [
+                f"<t:{int(fire_at.replace(tzinfo=UTC).timestamp())}:R> "
+                f"({days_before}d before)"
+                for days_before, fire_at in pending_reminders
+            ]
+            reminders_value = "\n".join(reminder_lines)
+        else:
+            reminders_value = "None — all reminders have been sent."
+        embed.add_field(name="Upcoming reminders", value=reminders_value, inline=False)
     return embed
 
 
@@ -554,10 +585,13 @@ class DeadlinesCog(commands.Cog, name="Deadlines"):
             return
 
         members = await get_deadline_members(deadline.id)  # type: ignore[arg-type]
+        now_utc = datetime.now(UTC).replace(tzinfo=None)
+        pending = _pending_reminder_times(deadline.due_date, now_utc)
         embed = _build_deadline_embed(
             deadline,
             members,
             sync_enabled=self._settings.calendar_sync_enabled,
+            pending_reminders=pending,
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
