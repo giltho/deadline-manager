@@ -62,6 +62,9 @@ def _parse_due_date(raw: str) -> datetime | None:
 
     Special time keywords (case-insensitive):
     - No time given: defaults to 23:59:59 UK time (Europe/London, DST-aware).
+    - Explicit time without a UTC offset: interpreted as UK time (Europe/London,
+      DST-aware), e.g. "2026-06-15 17:00" → 16:00 UTC during BST.
+    - Explicit time with a UTC offset: the supplied offset is honoured as-is.
     - "AoE" suffix: 23:59:59 Anywhere on Earth (UTC-12). The date part must
       still be provided, e.g. "2026-06-15 AoE".
 
@@ -105,11 +108,12 @@ def _parse_due_date(raw: str) -> datetime | None:
         )
         return local.astimezone(UTC).replace(tzinfo=None)
 
-    # Explicit time: honour any supplied timezone; if naive treat as UTC
+    # Explicit time: honour any supplied timezone; if naive treat as UK time
     dt = dt_a
     if dt.tzinfo is not None:
         return dt.astimezone(UTC).replace(tzinfo=None)
-    return dt.replace(microsecond=0)
+    local = dt.replace(microsecond=0, tzinfo=_TZ_UK)
+    return local.astimezone(UTC).replace(tzinfo=None)
 
 
 def _extract_user_ids(mentions_str: str) -> list[int]:

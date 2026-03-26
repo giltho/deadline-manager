@@ -71,18 +71,43 @@ def test_parse_due_date_natural_no_time():
 
 
 def test_parse_due_date_natural_with_time():
-    # Explicit time is preserved as-is (naive = UTC)
+    # Explicit time without offset is interpreted as UK time.
+    # June is BST (UTC+1): 17:00 BST = 16:00 UTC
     result = _parse_due_date("15 Jun 2026 17:00")
     assert result is not None
-    assert result.hour == 17
+    assert result.hour == 16
     assert result.minute == 0
 
 
 def test_parse_due_date_explicit_time_preserved():
-    # Explicit time should not be overridden to 23:59:59
+    # Explicit time should not be overridden to 23:59:59 and is UK time.
+    # June is BST (UTC+1): 09:30 BST = 08:30 UTC
     result = _parse_due_date("2026-06-15 09:30")
     assert result is not None
-    assert result.hour == 9
+    assert result.hour == 8
+    assert result.minute == 30
+
+
+def test_parse_due_date_explicit_time_winter():
+    # January is GMT (UTC+0): 17:00 GMT = 17:00 UTC (no offset)
+    result = _parse_due_date("2026-01-15 17:00")
+    assert result is not None
+    assert result.year == 2026
+    assert result.month == 1
+    assert result.day == 15
+    assert result.hour == 17
+    assert result.minute == 0
+
+
+def test_parse_due_date_explicit_time_with_tz_offset():
+    # Tz-aware input: the supplied offset must be honoured, not overridden.
+    # 17:00+05:30 = 11:30 UTC
+    result = _parse_due_date("2026-06-15 17:00+05:30")
+    assert result is not None
+    assert result.year == 2026
+    assert result.month == 6
+    assert result.day == 15
+    assert result.hour == 11
     assert result.minute == 30
 
 
