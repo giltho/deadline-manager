@@ -5,7 +5,7 @@ Startup sequence:
   1. Load settings from .env
   2. Initialise the SQLite database (create tables if missing)
   3. Set up the Discord bot with default intents
-  4. Register a global error handler for access-control check failures
+  4. Register a global error handler for slash command check failures
   5. Load cogs (Reminders first so the scheduler is running before commands fire)
   6. Sync slash commands to the configured guild
   7. Connect to Discord
@@ -57,6 +57,25 @@ class DeadlineBot(commands.Bot):
         await init_db()
         logger.info("Database initialised.")
 
+        # Register the tree-level error handler for all slash commands.
+        # on_app_command_error is NOT a valid discord.py hook on commands.Bot;
+        # CommandTree.on_error (wired via @self.tree.error) is the correct API.
+        @self.tree.error
+        async def on_tree_error(
+            interaction: discord.Interaction,
+            error: app_commands.AppCommandError,
+        ) -> None:
+            if isinstance(error, app_commands.CheckFailure):
+                msg = str(error) or "You don't have permission to use this command."
+            else:
+                logger.exception("Unhandled app command error: %s", error)
+                msg = "An unexpected error occurred. Please try again later."
+
+            if not interaction.response.is_done():
+                await interaction.response.send_message(msg, ephemeral=True)
+            else:
+                await interaction.followup.send(msg, ephemeral=True)
+
         # Load cogs
         for cog in COGS:
             await self.load_extension(cog)
@@ -74,29 +93,6 @@ class DeadlineBot(commands.Bot):
 
     async def on_ready(self) -> None:
         logger.info("Logged in as %s (ID: %d)", self.user, self.user.id)  # type: ignore[union-attr]
-
-    async def on_app_command_error(
-        self,
-        interaction: discord.Interaction,
-        error: app_commands.AppCommandError,
-    ) -> None:
-        """Global handler for slash command errors."""
-        if isinstance(error, app_commands.CheckFailure):
-            msg = str(error) or "You don't have permission to use this command."
-            # Respond ephemerally; handle both fresh and deferred interactions
-            if not interaction.response.is_done():
-                await interaction.response.send_message(msg, ephemeral=True)
-            else:
-                await interaction.followup.send(msg, ephemeral=True)
-            return
-
-        # Log unexpected errors and inform the user generically
-        logger.exception("Unhandled app command error: %s", error)
-        msg = "An unexpected error occurred. Please try again later."
-        if not interaction.response.is_done():
-            await interaction.response.send_message(msg, ephemeral=True)
-        else:
-            await interaction.followup.send(msg, ephemeral=True)
 
 
 async def main() -> None:
