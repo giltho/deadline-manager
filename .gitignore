@@ -203,6 +203,9 @@ poetry.toml
 # ruff
 .ruff_cache/
 
+# Local SQLite database (production DB on Railway uses a volume)
+*.db
+
 # LSP config files
 pyrightconfig.json
 

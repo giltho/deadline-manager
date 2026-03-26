@@ -27,7 +27,7 @@ from calendar_sync import SYNC_FAILED, make_calendar_client
 from checks import has_allowed_role
 from config import get_settings
 from db import DeadlineAccess, _get_deadline_by_title, get_deadline_members, get_session
-from discord_utils import send_dm
+from discord_utils import notify_users, send_dm
 from models import Deadline, DeadlineMember
 
 logger = logging.getLogger(__name__)
@@ -144,6 +144,17 @@ def _pending_reminder_times(
             results.append((days_before, fire_at))
     results.sort(key=lambda x: x[1])
     return results
+
+
+def _failed_dm_note(failed_ids: list[int]) -> str:
+    """Return a short warning string for users whose DMs could not be delivered.
+
+    Returns an empty string when *failed_ids* is empty.
+    """
+    if not failed_ids:
+        return ""
+    mentions = ", ".join(f"<@{uid}>" for uid in failed_ids)
+    return f"\n\n⚠️ Could not DM: {mentions} (DMs may be disabled for these users)."
 
 
 def _build_deadline_embed(
@@ -485,7 +496,23 @@ class DeadlinesCog(commands.Cog, name="Deadlines"):
             sync_enabled=self._settings.calendar_sync_enabled,
             title_prefix="Created: ",
         )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+        # Notify other assigned users
+        unix_ts = int(deadline.due_date.replace(tzinfo=UTC).timestamp())
+        notify_ids = [uid for uid in user_ids if uid != interaction.user.id]
+        if notify_ids:
+            dm_msg = (
+                f"<@{interaction.user.id}> has created the deadline "
+                f'**"{deadline.title}"** due <t:{unix_ts}:F> that involves you.'
+            )
+            failed = await notify_users(self.bot, notify_ids, dm_msg)
+        else:
+            failed = []
+
+        note = _failed_dm_note(failed)
+        await interaction.response.send_message(
+            content=note or None, embed=embed, ephemeral=True
+        )
 
     # ── /deadline list ────────────────────────────────────────────────────────
 
@@ -659,7 +686,32 @@ class DeadlinesCog(commands.Cog, name="Deadlines"):
             sync_enabled=self._settings.calendar_sync_enabled,
             title_prefix="Updated: ",
         )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+        # Notify other assigned users about what changed
+        change_parts: list[str] = []
+        if new_title is not None:
+            change_parts.append(f'title → **"{deadline.title}"**')
+        if parsed_date is not None:
+            unix_ts = int(deadline.due_date.replace(tzinfo=UTC).timestamp())
+            change_parts.append(f"due date → <t:{unix_ts}:F>")
+        if description is not None:
+            change_parts.append("description updated")
+        changes_str = ", ".join(change_parts) if change_parts else "details updated"
+
+        notify_ids = [m.user_id for m in members if m.user_id != interaction.user.id]
+        if notify_ids:
+            dm_msg = (
+                f"<@{interaction.user.id}> has updated the deadline "
+                f'**"{deadline.title}"** — {changes_str}.'
+            )
+            failed = await notify_users(self.bot, notify_ids, dm_msg)
+        else:
+            failed = []
+
+        note = _failed_dm_note(failed)
+        await interaction.response.send_message(
+            content=note or None, embed=embed, ephemeral=True
+        )
 
     # ── /deadline assign ──────────────────────────────────────────────────────
 
@@ -712,10 +764,28 @@ class DeadlinesCog(commands.Cog, name="Deadlines"):
                 + ", ".join(f"<@{u}>" for u in conflicts)
             )
 
-        await interaction.response.send_message(
-            f"**{title}** — " + " | ".join(parts) if parts else "No changes made.",
-            ephemeral=True,
-        )
+        # Notify added/removed users
+        failed: list[int] = []
+        if added or removed:
+            deadline_obj = await access.get_by_title(title)
+            if deadline_obj is not None:
+                unix_ts = int(deadline_obj.due_date.replace(tzinfo=UTC).timestamp())
+                if added:
+                    add_msg = (
+                        f"<@{interaction.user.id}> has added you to the deadline "
+                        f'**"{title}"** due <t:{unix_ts}:F>.'
+                    )
+                    failed += await notify_users(self.bot, list(added), add_msg)
+                if removed:
+                    remove_msg = (
+                        f"<@{interaction.user.id}> has removed you from the deadline "
+                        f'**"{title}"**.'
+                    )
+                    failed += await notify_users(self.bot, list(removed), remove_msg)
+
+        note = _failed_dm_note(failed)
+        reply = f"**{title}** — " + " | ".join(parts) if parts else "No changes made."
+        await interaction.response.send_message(reply + note, ephemeral=True)
 
     # ── /deadline delete ──────────────────────────────────────────────────────
 
@@ -750,6 +820,10 @@ class DeadlinesCog(commands.Cog, name="Deadlines"):
         """Perform the actual deletion after confirmation."""
         title = deadline.title
         deadline_id = deadline.id
+        unix_ts = int(deadline.due_date.replace(tzinfo=UTC).timestamp())
+
+        # Fetch members before deletion (cascade will remove them from DB)
+        members_before = await get_deadline_members(deadline_id)  # type: ignore[arg-type]
 
         # Cancel reminder jobs first
         reminders_cog = self.bot.cogs.get("Reminders")
@@ -767,8 +841,20 @@ class DeadlinesCog(commands.Cog, name="Deadlines"):
                 await session.delete(db_deadline)
                 await session.commit()
 
+        # Notify all assigned members (deadline is gone — DM is the only notification)
+        notify_ids = [m.user_id for m in members_before]
+        if notify_ids:
+            dm_msg = (
+                f"<@{interaction.user.id}> has deleted the deadline "
+                f'**"{title}"** (was due <t:{unix_ts}:F>).'
+            )
+            failed = await notify_users(self.bot, notify_ids, dm_msg)
+        else:
+            failed = []
+
+        note = _failed_dm_note(failed)
         await interaction.response.send_message(
-            f"Deadline **{title}** has been deleted.", ephemeral=True
+            f"Deadline **{title}** has been deleted." + note, ephemeral=True
         )
 
     # ── calendar_sync TODO helpers (implement alongside MS Graph) ────────────

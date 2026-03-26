@@ -771,8 +771,16 @@ async def test_do_delete_removes_from_db(db_session, mock_interaction):
     cog = _make_cog()
     dl = await _seed_deadline(db_session, title="Delete Me")
 
-    with patch.object(
-        deadlines_module, "get_session", return_value=_session_ctx(db_session)
+    with (
+        patch.object(
+            deadlines_module, "get_session", return_value=_session_ctx(db_session)
+        ),
+        patch.object(
+            deadlines_module,
+            "get_deadline_members",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch.object(deadlines_module, "notify_users", new=AsyncMock(return_value=[])),
     ):
         await cog._do_delete(mock_interaction, dl)
 
@@ -829,3 +837,477 @@ async def test_test_dms_error(mock_interaction):
     call_kwargs = mock_interaction.response.send_message.call_args
     assert call_kwargs.kwargs.get("ephemeral") is True
     assert "wrong" in call_kwargs.args[0].lower()
+
+
+# ── Notification DMs ───────────────────────────────────────────────────────────
+
+
+async def test_add_notifies_other_members(mock_interaction):
+    """deadline_add DMs all assigned users except the actor."""
+    cog = _make_cog()
+    actor_id = 1
+    other_id = 2
+    mock_interaction.user.id = actor_id
+
+    dl = Deadline(
+        id=10,
+        title="Notify Test",
+        due_date=datetime.now(UTC).replace(tzinfo=None) + timedelta(days=10),
+        created_by=actor_id,
+        created_at=datetime.now(UTC).replace(tzinfo=None),
+    )
+    access = _make_access_mock(create=dl)
+
+    notify_mock = AsyncMock(return_value=[])
+
+    with (
+        patch.object(deadlines_module, "DeadlineAccess", return_value=access),
+        patch.object(
+            deadlines_module, "get_deadline_members", new=AsyncMock(return_value=[])
+        ),
+        patch.object(deadlines_module, "notify_users", notify_mock),
+    ):
+        await cog.deadline_add.callback(
+            cog,
+            mock_interaction,
+            title="Notify Test",
+            due_date="2027-01-01",
+            members=f"<@{actor_id}> <@{other_id}>",
+            description=None,
+        )
+
+    # notify_users should have been called with [other_id] only (actor excluded)
+    notify_mock.assert_awaited_once()
+    _, called_ids, called_msg = notify_mock.call_args.args
+    assert called_ids == [other_id]
+    assert "Notify Test" in called_msg
+    assert str(actor_id) in called_msg
+
+
+async def test_add_no_notification_when_only_actor(mock_interaction):
+    """deadline_add does not call notify_users when actor is the only member."""
+    cog = _make_cog()
+    mock_interaction.user.id = 1
+
+    dl = Deadline(
+        id=11,
+        title="Solo",
+        due_date=datetime.now(UTC).replace(tzinfo=None) + timedelta(days=10),
+        created_by=1,
+        created_at=datetime.now(UTC).replace(tzinfo=None),
+    )
+    access = _make_access_mock(create=dl)
+    notify_mock = AsyncMock(return_value=[])
+
+    with (
+        patch.object(deadlines_module, "DeadlineAccess", return_value=access),
+        patch.object(
+            deadlines_module, "get_deadline_members", new=AsyncMock(return_value=[])
+        ),
+        patch.object(deadlines_module, "notify_users", notify_mock),
+    ):
+        await cog.deadline_add.callback(
+            cog,
+            mock_interaction,
+            title="Solo",
+            due_date="2027-01-01",
+            members=None,
+            description=None,
+        )
+
+    notify_mock.assert_not_called()
+
+
+async def test_add_failed_dm_note_in_reply(mock_interaction):
+    """When some DMs fail on add, the reply contains a warning note."""
+    cog = _make_cog()
+    actor_id = 1
+    other_id = 2
+    mock_interaction.user.id = actor_id
+
+    dl = Deadline(
+        id=12,
+        title="DM Fail Test",
+        due_date=datetime.now(UTC).replace(tzinfo=None) + timedelta(days=10),
+        created_by=actor_id,
+        created_at=datetime.now(UTC).replace(tzinfo=None),
+    )
+    access = _make_access_mock(create=dl)
+    # notify_users returns the failed IDs
+    notify_mock = AsyncMock(return_value=[other_id])
+
+    with (
+        patch.object(deadlines_module, "DeadlineAccess", return_value=access),
+        patch.object(
+            deadlines_module, "get_deadline_members", new=AsyncMock(return_value=[])
+        ),
+        patch.object(deadlines_module, "notify_users", notify_mock),
+    ):
+        await cog.deadline_add.callback(
+            cog,
+            mock_interaction,
+            title="DM Fail Test",
+            due_date="2027-01-01",
+            members=f"<@{actor_id}> <@{other_id}>",
+            description=None,
+        )
+
+    call_kwargs = mock_interaction.response.send_message.call_args.kwargs
+    note = call_kwargs.get("content") or ""
+    assert str(other_id) in note
+    assert "could not dm" in note.lower()
+
+
+async def test_add_no_notification_on_bad_date(mock_interaction):
+    """deadline_add does not call notify_users when date parsing fails."""
+    cog = _make_cog()
+    notify_mock = AsyncMock(return_value=[])
+
+    with patch.object(deadlines_module, "notify_users", notify_mock):
+        await cog.deadline_add.callback(
+            cog,
+            mock_interaction,
+            title="Bad",
+            due_date="not-a-date",
+            members="<@2>",
+            description=None,
+        )
+
+    notify_mock.assert_not_called()
+
+
+async def test_edit_notifies_other_members(db_session, mock_interaction):
+    """deadline_edit DMs all assigned members except the actor."""
+    cog = _make_cog()
+    actor_id = 1
+    other_id = 2
+    mock_interaction.user.id = actor_id
+
+    dl = await _seed_deadline(db_session, title="Edit Notify")
+    updated_dl = Deadline(
+        id=dl.id,
+        title="Edit Notify",
+        due_date=dl.due_date,
+        created_by=dl.created_by,
+        created_at=dl.created_at,
+    )
+    access = _make_access_mock(edit=updated_dl)
+
+    other_member = MagicMock()
+    other_member.user_id = other_id
+
+    notify_mock = AsyncMock(return_value=[])
+
+    with (
+        patch.object(deadlines_module, "DeadlineAccess", return_value=access),
+        patch.object(
+            deadlines_module,
+            "get_deadline_members",
+            new=AsyncMock(return_value=[other_member]),
+        ),
+        patch.object(deadlines_module, "notify_users", notify_mock),
+    ):
+        await cog.deadline_edit.callback(
+            cog,
+            mock_interaction,
+            title="Edit Notify",
+            new_title=None,
+            due_date=None,
+            description="new desc",
+        )
+
+    notify_mock.assert_awaited_once()
+    _, called_ids, called_msg = notify_mock.call_args.args
+    assert called_ids == [other_id]
+    assert "Edit Notify" in called_msg
+
+
+async def test_edit_actor_excluded_from_notifications(db_session, mock_interaction):
+    """deadline_edit does not DM the actor even if they are a member."""
+    cog = _make_cog()
+    actor_id = 42
+    mock_interaction.user.id = actor_id
+
+    dl = await _seed_deadline(db_session, title="Actor Excluded")
+    updated_dl = Deadline(
+        id=dl.id,
+        title="Actor Excluded",
+        due_date=dl.due_date,
+        created_by=dl.created_by,
+        created_at=dl.created_at,
+    )
+    access = _make_access_mock(edit=updated_dl)
+
+    # actor is the only member
+    actor_member = MagicMock()
+    actor_member.user_id = actor_id
+
+    notify_mock = AsyncMock(return_value=[])
+
+    with (
+        patch.object(deadlines_module, "DeadlineAccess", return_value=access),
+        patch.object(
+            deadlines_module,
+            "get_deadline_members",
+            new=AsyncMock(return_value=[actor_member]),
+        ),
+        patch.object(deadlines_module, "notify_users", notify_mock),
+    ):
+        await cog.deadline_edit.callback(
+            cog,
+            mock_interaction,
+            title="Actor Excluded",
+            new_title=None,
+            due_date=None,
+            description="updated",
+        )
+
+    # notify_users should NOT have been called (no one else to notify)
+    notify_mock.assert_not_called()
+
+
+async def test_edit_changes_description_in_dm(db_session, mock_interaction):
+    """When only description changes, DM says 'description updated'."""
+    cog = _make_cog()
+    actor_id = 1
+    other_id = 3
+    mock_interaction.user.id = actor_id
+
+    dl = await _seed_deadline(db_session, title="Desc Change")
+    updated_dl = Deadline(
+        id=dl.id,
+        title="Desc Change",
+        due_date=dl.due_date,
+        created_by=dl.created_by,
+        created_at=dl.created_at,
+    )
+    access = _make_access_mock(edit=updated_dl)
+
+    other_member = MagicMock()
+    other_member.user_id = other_id
+
+    notify_mock = AsyncMock(return_value=[])
+
+    with (
+        patch.object(deadlines_module, "DeadlineAccess", return_value=access),
+        patch.object(
+            deadlines_module,
+            "get_deadline_members",
+            new=AsyncMock(return_value=[other_member]),
+        ),
+        patch.object(deadlines_module, "notify_users", notify_mock),
+    ):
+        await cog.deadline_edit.callback(
+            cog,
+            mock_interaction,
+            title="Desc Change",
+            new_title=None,
+            due_date=None,
+            description="new desc",
+        )
+
+    _, _, called_msg = notify_mock.call_args.args
+    assert "description updated" in called_msg.lower()
+
+
+async def test_assign_notifies_added_user(mock_interaction):
+    """deadline_assign DMs newly added users."""
+    cog = _make_cog()
+    actor_id = 1
+    added_id = 5
+    mock_interaction.user.id = actor_id
+
+    dl = Deadline(
+        id=20,
+        title="Assign Notify",
+        due_date=datetime.now(UTC).replace(tzinfo=None) + timedelta(days=10),
+        created_by=actor_id,
+        created_at=datetime.now(UTC).replace(tzinfo=None),
+    )
+    access = _make_access_mock(assign=([added_id], [], []), get_by_title=dl)
+
+    notify_mock = AsyncMock(return_value=[])
+
+    with (
+        patch.object(deadlines_module, "DeadlineAccess", return_value=access),
+        patch.object(deadlines_module, "notify_users", notify_mock),
+    ):
+        await cog.deadline_assign.callback(
+            cog,
+            mock_interaction,
+            title="Assign Notify",
+            add=f"<@{added_id}>",
+            remove=None,
+        )
+
+    # Should have been called once for the added user
+    notify_mock.assert_awaited_once()
+    _, called_ids, called_msg = notify_mock.call_args.args
+    assert called_ids == [added_id]
+    assert "added you" in called_msg.lower()
+    assert "Assign Notify" in called_msg
+
+
+async def test_assign_notifies_removed_user(mock_interaction):
+    """deadline_assign DMs newly removed users."""
+    cog = _make_cog()
+    actor_id = 1
+    removed_id = 6
+    mock_interaction.user.id = actor_id
+
+    dl = Deadline(
+        id=21,
+        title="Remove Notify",
+        due_date=datetime.now(UTC).replace(tzinfo=None) + timedelta(days=10),
+        created_by=actor_id,
+        created_at=datetime.now(UTC).replace(tzinfo=None),
+    )
+    access = _make_access_mock(assign=([], [removed_id], []), get_by_title=dl)
+
+    notify_mock = AsyncMock(return_value=[])
+
+    with (
+        patch.object(deadlines_module, "DeadlineAccess", return_value=access),
+        patch.object(deadlines_module, "notify_users", notify_mock),
+    ):
+        await cog.deadline_assign.callback(
+            cog,
+            mock_interaction,
+            title="Remove Notify",
+            add=None,
+            remove=f"<@{removed_id}>",
+        )
+
+    notify_mock.assert_awaited_once()
+    _, called_ids, called_msg = notify_mock.call_args.args
+    assert called_ids == [removed_id]
+    assert "removed you" in called_msg.lower()
+    assert "Remove Notify" in called_msg
+
+
+async def test_assign_notifies_both_added_and_removed(mock_interaction):
+    """deadline_assign sends separate DMs to added and removed users."""
+    cog = _make_cog()
+    actor_id = 1
+    added_id = 7
+    removed_id = 8
+    mock_interaction.user.id = actor_id
+
+    dl = Deadline(
+        id=22,
+        title="Both Notify",
+        due_date=datetime.now(UTC).replace(tzinfo=None) + timedelta(days=10),
+        created_by=actor_id,
+        created_at=datetime.now(UTC).replace(tzinfo=None),
+    )
+    access = _make_access_mock(assign=([added_id], [removed_id], []), get_by_title=dl)
+
+    notify_mock = AsyncMock(return_value=[])
+
+    with (
+        patch.object(deadlines_module, "DeadlineAccess", return_value=access),
+        patch.object(deadlines_module, "notify_users", notify_mock),
+    ):
+        await cog.deadline_assign.callback(
+            cog,
+            mock_interaction,
+            title="Both Notify",
+            add=f"<@{added_id}>",
+            remove=f"<@{removed_id}>",
+        )
+
+    assert notify_mock.await_count == 2
+    all_ids = []
+    for call in notify_mock.call_args_list:
+        all_ids.extend(call.args[1])
+    assert added_id in all_ids
+    assert removed_id in all_ids
+
+
+async def test_assign_no_notification_on_conflict_only(mock_interaction):
+    """No DMs when the only result is a conflict (nothing added or removed)."""
+    cog = _make_cog()
+    mock_interaction.user.id = 1
+
+    access = _make_access_mock(assign=([], [], [99]))
+    notify_mock = AsyncMock(return_value=[])
+
+    with (
+        patch.object(deadlines_module, "DeadlineAccess", return_value=access),
+        patch.object(deadlines_module, "notify_users", notify_mock),
+    ):
+        await cog.deadline_assign.callback(
+            cog,
+            mock_interaction,
+            title="Conflict Only",
+            add="<@99>",
+            remove=None,
+        )
+
+    notify_mock.assert_not_called()
+
+
+async def test_do_delete_notifies_all_members(db_session, mock_interaction):
+    """_do_delete DMs all members before deleting the deadline."""
+    cog = _make_cog()
+    actor_id = 1
+    other_id = 2
+    mock_interaction.user.id = actor_id
+
+    dl = await _seed_deadline(db_session, title="Delete Notify")
+
+    member1 = MagicMock()
+    member1.user_id = actor_id
+    member2 = MagicMock()
+    member2.user_id = other_id
+
+    notify_mock = AsyncMock(return_value=[])
+
+    with (
+        patch.object(
+            deadlines_module,
+            "get_deadline_members",
+            new=AsyncMock(return_value=[member1, member2]),
+        ),
+        patch.object(
+            deadlines_module, "get_session", return_value=_session_ctx(db_session)
+        ),
+        patch.object(deadlines_module, "notify_users", notify_mock),
+    ):
+        await cog._do_delete(mock_interaction, dl)
+
+    notify_mock.assert_awaited_once()
+    _, called_ids, called_msg = notify_mock.call_args.args
+    assert set(called_ids) == {actor_id, other_id}
+    assert "deleted" in called_msg.lower()
+    assert "Delete Notify" in called_msg
+
+
+async def test_do_delete_failed_dm_note_in_reply(db_session, mock_interaction):
+    """When delete DMs fail, the reply contains a warning note."""
+    cog = _make_cog()
+    mock_interaction.user.id = 1
+
+    dl = await _seed_deadline(db_session, title="Delete DM Fail")
+
+    member = MagicMock()
+    member.user_id = 2
+    notify_mock = AsyncMock(return_value=[2])  # user 2 failed
+
+    with (
+        patch.object(
+            deadlines_module,
+            "get_deadline_members",
+            new=AsyncMock(return_value=[member]),
+        ),
+        patch.object(
+            deadlines_module, "get_session", return_value=_session_ctx(db_session)
+        ),
+        patch.object(deadlines_module, "notify_users", notify_mock),
+    ):
+        await cog._do_delete(mock_interaction, dl)
+
+    reply = mock_interaction.response.send_message.call_args.args[0]
+    assert "deleted" in reply.lower()
+    assert "could not dm" in reply.lower()
+    assert "2" in reply

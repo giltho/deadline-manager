@@ -35,3 +35,22 @@ async def send_dm(
     except discord.HTTPException as exc:
         logger.error("Failed to DM user %d: %s", user_id, exc)
         return "error"
+
+
+async def notify_users(
+    bot: discord.Client,
+    user_ids: list[int],
+    message: str,
+) -> list[int]:
+    """Send *message* as a DM to each user in *user_ids*.
+
+    Returns a list of user IDs for which delivery failed (either
+    ``"forbidden"`` or ``"error"``).  Successfully delivered IDs are not
+    included.  The list is empty when all DMs succeeded.
+    """
+    failed: list[int] = []
+    for uid in user_ids:
+        result = await send_dm(bot, uid, message)
+        if result != "sent":
+            failed.append(uid)
+    return failed
