@@ -11,7 +11,7 @@ A Discord bot for research group deadline management. Members with designated ro
 - Reminders survive restarts — all future jobs are rescheduled on startup
 - Role-based access control: only members with allowed roles can manage deadlines
 - Paginated `/deadline list` with Prev/Next buttons
-- Flexible date parsing (`2026-06-15`, `15 Jun 2026 17:00`, etc.)
+- Flexible date parsing with smart time defaulting (see below)
 - SQLite database via SQLModel — zero external database required
 - Optional Microsoft Graph calendar sync (stubbed, ready to implement)
 
@@ -29,8 +29,26 @@ All commands are guild-scoped slash commands under the `/deadline` group.
 | `/deadline assign` | Add or remove assigned members |
 | `/deadline delete` | Delete a deadline (confirmation required) |
 | `/deadline show-everyone` | Post your deadlines publicly in the channel |
+| `/deadline test-dms` | Verify the bot can DM you (required for reminders) |
 
 All `title` parameters support autocomplete, filtered to your own deadlines.
+
+### Due date formats
+
+The `due_date` parameter on `/deadline add` and `/deadline edit` accepts flexible input:
+
+| Input | Interpreted as |
+|---|---|
+| `2026-06-15` | 23:59:59 UK time on 15 Jun 2026 (BST or GMT, DST-aware) |
+| `15 Jun 2026` | 23:59:59 UK time on 15 Jun 2026 |
+| `2026-06-15 17:00` | 17:00:00 UTC on 15 Jun 2026 (explicit time, treated as UTC) |
+| `15 Jun 2026 17:00` | 17:00:00 UTC on 15 Jun 2026 |
+| `2026-06-15 AoE` | 23:59:59 Anywhere on Earth (UTC−12) = 11:59:59 UTC on 16 Jun 2026 |
+| `15 Jun 2026 aoe` | Same as above (`AoE` is case-insensitive) |
+
+**No time given** — defaults to **23:59:59 UK time** (`Europe/London`), which is BST (UTC+1) in summer and GMT (UTC+0) in winter.
+
+**AoE (Anywhere on Earth)** — append `AoE` after the date to use the latest timezone on Earth (UTC−12). This means the deadline is not considered passed until the clock strikes midnight everywhere on the planet — a common convention for academic paper submissions.
 
 ### Privacy model
 

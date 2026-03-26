@@ -29,11 +29,27 @@ from models import Deadline, DeadlineMember
 
 
 def test_parse_due_date_iso():
+    # Date-only ISO: should default to 23:59:59 UK time (GMT in January = UTC+0)
+    result = _parse_due_date("2026-01-15")
+    assert result is not None
+    assert result.year == 2026
+    assert result.month == 1
+    assert result.day == 15
+    assert result.hour == 23
+    assert result.minute == 59
+    assert result.second == 59
+
+
+def test_parse_due_date_iso_bst():
+    # Date-only in BST season (June, UK = UTC+1): 23:59:59 BST = 22:59:59 UTC
     result = _parse_due_date("2026-06-15")
     assert result is not None
     assert result.year == 2026
     assert result.month == 6
     assert result.day == 15
+    assert result.hour == 22
+    assert result.minute == 59
+    assert result.second == 59
 
 
 def test_parse_due_date_iso_not_dayfirst():
@@ -44,10 +60,72 @@ def test_parse_due_date_iso_not_dayfirst():
     assert result.day == 9
 
 
-def test_parse_due_date_natural():
+def test_parse_due_date_natural_no_time():
+    # Natural date without time: defaults to 23:59:59 UK time
+    result = _parse_due_date("15 Jan 2026")
+    assert result is not None
+    assert result.hour == 23
+    assert result.minute == 59
+    assert result.second == 59
+
+
+def test_parse_due_date_natural_with_time():
+    # Explicit time is preserved as-is (naive = UTC)
     result = _parse_due_date("15 Jun 2026 17:00")
     assert result is not None
     assert result.hour == 17
+    assert result.minute == 0
+
+
+def test_parse_due_date_explicit_time_preserved():
+    # Explicit time should not be overridden to 23:59:59
+    result = _parse_due_date("2026-06-15 09:30")
+    assert result is not None
+    assert result.hour == 9
+    assert result.minute == 30
+
+
+def test_parse_due_date_aoe_lowercase():
+    # "aoe" suffix (lowercase) — 23:59:59 UTC-12 = next day 11:59:59 UTC
+    result = _parse_due_date("2026-06-15 aoe")
+    assert result is not None
+    assert result.year == 2026
+    assert result.month == 6
+    assert result.day == 16
+    assert result.hour == 11
+    assert result.minute == 59
+    assert result.second == 59
+
+
+def test_parse_due_date_aoe_uppercase():
+    result = _parse_due_date("2026-06-15 AOE")
+    assert result is not None
+    assert result.day == 16
+    assert result.hour == 11
+
+
+def test_parse_due_date_aoe_mixed_case():
+    result = _parse_due_date("2026-06-15 AoE")
+    assert result is not None
+    assert result.day == 16
+    assert result.hour == 11
+
+
+def test_parse_due_date_aoe_natural_date():
+    result = _parse_due_date("15 Jun 2026 AoE")
+    assert result is not None
+    assert result.month == 6
+    assert result.day == 16
+    assert result.hour == 11
+    assert result.minute == 59
+    assert result.second == 59
+
+
+def test_parse_due_date_aoe_alone_returns_none():
+    # "aoe" without a date is invalid
+    assert _parse_due_date("aoe") is None
+    assert _parse_due_date("AOE") is None
+    assert _parse_due_date("AoE") is None
 
 
 def test_parse_due_date_invalid():

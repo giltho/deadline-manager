@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import re
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 import discord
 from dateutil import parser as dateutil_parser
@@ -52,20 +53,63 @@ def _deadline_colour(days: int) -> discord.Colour:
     return COLOUR_GREEN
 
 
+_TZ_UK = ZoneInfo("Europe/London")
+_TZ_AOE = ZoneInfo("Etc/GMT+12")  # UTC-12, latest timezone on Earth
+
+
 def _parse_due_date(raw: str) -> datetime | None:
     """Parse a flexible date string into a naive UTC datetime, or return None.
+
+    Special time keywords (case-insensitive):
+    - No time given: defaults to 23:59:59 UK time (Europe/London, DST-aware).
+    - "AoE" suffix: 23:59:59 Anywhere on Earth (UTC-12). The date part must
+      still be provided, e.g. "2026-06-15 AoE".
 
     yearfirst=True ensures ISO dates like 2026-07-09 are read as YYYY-MM-DD
     rather than being misinterpreted when dayfirst would swap month and day.
     """
+    stripped = raw.strip()
+
+    # ── AoE handling ──────────────────────────────────────────────────────────
+    # Strip a trailing "aoe" token (with optional separator) and parse the rest.
+    aoe_match = re.match(r"^(.*?)\s+aoe\s*$", stripped, re.IGNORECASE)
+    if aoe_match:
+        date_part = aoe_match.group(1).strip()
+        if not date_part:
+            return None
+        try:
+            dt = dateutil_parser.parse(date_part, yearfirst=True)
+        except (ValueError, OverflowError):
+            return None
+        local = dt.replace(hour=23, minute=59, second=59, microsecond=0, tzinfo=_TZ_AOE)
+        return local.astimezone(UTC).replace(tzinfo=None)
+
+    # ── Normal date (with or without explicit time) ───────────────────────────
+    # Detect whether the user supplied a time component by parsing twice with
+    # two different sentinel defaults; if the result time differs between the
+    # two parses the user must have supplied it explicitly.
+    _SENTINEL_A = datetime(1900, 1, 1, 6, 0, 0)
+    _SENTINEL_B = datetime(1900, 1, 1, 7, 0, 0)
     try:
-        dt = dateutil_parser.parse(raw, yearfirst=True)
-        # If no timezone info, treat as UTC
-        if dt.tzinfo is not None:
-            dt = dt.astimezone(UTC).replace(tzinfo=None)
-        return dt
+        dt_a = dateutil_parser.parse(stripped, yearfirst=True, default=_SENTINEL_A)
+        dt_b = dateutil_parser.parse(stripped, yearfirst=True, default=_SENTINEL_B)
     except (ValueError, OverflowError):
         return None
+
+    user_gave_time = dt_a.hour == dt_b.hour and dt_a.minute == dt_b.minute
+
+    if not user_gave_time:
+        # Date-only: default to 23:59:59 UK time
+        local = dt_a.replace(
+            hour=23, minute=59, second=59, microsecond=0, tzinfo=_TZ_UK
+        )
+        return local.astimezone(UTC).replace(tzinfo=None)
+
+    # Explicit time: honour any supplied timezone; if naive treat as UTC
+    dt = dt_a
+    if dt.tzinfo is not None:
+        return dt.astimezone(UTC).replace(tzinfo=None)
+    return dt.replace(microsecond=0)
 
 
 def _extract_user_ids(mentions_str: str) -> list[int]:
@@ -279,8 +323,11 @@ class DeadlinesCog(commands.Cog, name="Deadlines"):
             name="Creating a deadline",
             value=(
                 "`/deadline add title: … due_date: … [members: @mentions] [description: …]`\n"  # noqa: E501
-                "Creates a new deadline. If you omit `members` it is assigned to you alone. "  # noqa: E501
-                "Date formats like `2026-06-15` or `15 Jun 2026 17:00` are both accepted."  # noqa: E501
+                "Creates a new deadline. If you omit `members` it is assigned to you alone.\n"  # noqa: E501
+                "**Date formats:** `2026-06-15`, `15 Jun 2026 17:00`, etc.\n"
+                "**No time given:** defaults to 23:59:59 UK time (Europe/London, BST/GMT-aware).\n"  # noqa: E501
+                "**AoE suffix:** append `AoE` (case-insensitive) for Anywhere on Earth "
+                "(UTC−12) — e.g. `2026-06-15 AoE`."
             ),
             inline=False,
         )
@@ -346,7 +393,10 @@ class DeadlinesCog(commands.Cog, name="Deadlines"):
     @has_allowed_role()
     @app_commands.describe(
         title="Short name for the deadline",
-        due_date="Due date, e.g. '2026-06-15' or '15 Jun 2026 17:00'",
+        due_date=(
+            "Due date, e.g. '2026-06-15' or '15 Jun 2026 17:00'. "
+            "No time = 23:59 UK time. Append 'AoE' for Anywhere on Earth (UTC-12)."
+        ),
         members="@mentions to assign (defaults to you)",
         description="Optional free-text notes",
     )
@@ -518,7 +568,10 @@ class DeadlinesCog(commands.Cog, name="Deadlines"):
     @app_commands.describe(
         title="Deadline to edit",
         new_title="New title",
-        due_date="New due date",
+        due_date=(
+            "New due date. No time = 23:59 UK time. "
+            "Append 'AoE' for Anywhere on Earth (UTC-12)."
+        ),
         description="New description",
     )
     @app_commands.autocomplete(title=_title_autocomplete)
