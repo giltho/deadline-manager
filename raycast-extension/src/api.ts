@@ -9,16 +9,18 @@ export interface DeadlineResponse {
   title: string;
   description: string | null;
   due_date: string; // ISO 8601 datetime string
-  created_by: number;
+  // Discord snowflake IDs serialized as strings to avoid JS integer precision loss.
+  created_by: string;
   created_at: string; // ISO 8601 datetime string
-  member_ids: number[];
+  member_ids: string[];
 }
 
 export interface DeadlineCreateRequest {
   title: string;
   due_date: string; // flexible date string, e.g. "2026-06-15" or "15 Jun 2026 17:00"
   description?: string;
-  member_ids?: number[];
+  // Discord snowflake IDs as strings to avoid JS integer precision loss.
+  member_ids?: string[];
 }
 
 export interface GuildMember {
@@ -77,13 +79,13 @@ export async function searchMembers(query: string, limit = 10): Promise<GuildMem
   return apiFetch<GuildMember[]>(`/guild/members/search?${params}`);
 }
 
-export async function getMembers(ids: number[]): Promise<GuildMember[]> {
+export async function getMembers(ids: string[]): Promise<GuildMember[]> {
   console.log(`[api] getMembers ids=${JSON.stringify(ids)}`);
   if (ids.length === 0) {
     console.log(`[api] getMembers: empty ids, returning []`);
     return [];
   }
   const params = new URLSearchParams();
-  ids.forEach((id) => params.append("ids", String(id)));
+  ids.forEach((id) => params.append("ids", id));
   return apiFetch<GuildMember[]>(`/guild/members?${params}`);
 }

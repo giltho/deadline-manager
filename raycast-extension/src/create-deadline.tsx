@@ -38,7 +38,7 @@ function CreateDeadline({ onCreated }: Props) {
           title: vals.title.trim(),
           due_date: vals.due_date.trim(),
           description: vals.description.trim() || undefined,
-          member_ids: vals.member_ids.map(Number),
+          member_ids: vals.member_ids,
         });
         toast.style = Toast.Style.Success;
         toast.title = "Deadline created";

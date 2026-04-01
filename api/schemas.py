@@ -33,9 +33,11 @@ class DeadlineResponse(BaseModel):
     title: str
     description: str | None
     due_date: datetime
-    created_by: int
+    # Discord snowflake IDs are 64-bit integers — exceed JS Number.MAX_SAFE_INTEGER.
+    # We serialize them as strings so JavaScript clients receive the exact value.
+    created_by: str
     created_at: datetime
-    member_ids: list[int]
+    member_ids: list[str]
 
 
 class DeadlineCreateRequest(BaseModel):
@@ -50,8 +52,8 @@ class DeadlineCreateRequest(BaseModel):
         ),
     )
     description: str | None = Field(default=None, max_length=1000)
-    # Additional member Discord user IDs to assign (creator is always assigned).
-    member_ids: list[int] = Field(default_factory=list)
+    # Discord snowflake IDs sent as strings to avoid JS integer precision loss.
+    member_ids: list[str] = Field(default_factory=list)
 
 
 # ── Guild ─────────────────────────────────────────────────────────────────────

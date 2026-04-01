@@ -54,7 +54,7 @@ function DeadlineDetail({ deadline }: { deadline: DeadlineResponse }) {
   console.log(`[DeadlineDetail] allIds to resolve: ${JSON.stringify(allIds)}`);
 
   const { isLoading: isLoadingMembers, data: resolvedMembers, error: membersError } = usePromise(
-    (ids: number[]) => {
+    (ids: string[]) => {
       console.log(`[DeadlineDetail] usePromise firing with ids=${JSON.stringify(ids)}`);
       return getMembers(ids);
     },
@@ -68,12 +68,12 @@ function DeadlineDetail({ deadline }: { deadline: DeadlineResponse }) {
     (resolvedMembers ?? []).map((m) => [m.id, m]),
   );
 
-  const creatorMember = memberMap.get(String(deadline.created_by));
+  const creatorMember = memberMap.get(deadline.created_by);
   const creatorName = creatorMember ? memberDisplayName(creatorMember) : `User ${deadline.created_by}`;
 
   // Assigned members are only deadline.member_ids (not the raw allIds union).
   const assignedMembers = deadline.member_ids
-    .map((id) => memberMap.get(String(id)))
+    .map((id) => memberMap.get(id))
     .filter((m): m is GuildMember => m !== undefined);
 
   console.log(`[DeadlineDetail] creatorName=${creatorName} assignedMembers=${JSON.stringify(assignedMembers?.map((m) => m.username))}`);

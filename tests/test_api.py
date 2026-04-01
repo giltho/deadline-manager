@@ -235,7 +235,7 @@ class TestListDeadlines:
         data = resp.json()
         assert len(data) == 1
         assert data[0]["title"] == "Test Deadline"
-        assert data[0]["member_ids"] == [123456789]
+        assert data[0]["member_ids"] == ["123456789"]
 
     def test_days_param_passed_to_access(self, client, mock_auth):
         with patch("api.routers.deadlines.DeadlineAccess") as mock_cls:
@@ -325,7 +325,7 @@ class TestCreateDeadline:
         assert resp.status_code == 201
         data = resp.json()
         assert data["title"] == "My Deadline"
-        assert 123456789 in data["member_ids"]
+        assert "123456789" in data["member_ids"]
 
     def test_creator_always_included_in_member_ids(self, client, mock_auth):
         """Creator (FAKE_USER.id=123456789) must be in user_ids even if not in body."""
@@ -373,7 +373,7 @@ class TestCreateDeadline:
 
             client.post(
                 "/deadlines",
-                json=self._body(member_ids=[999]),
+                json=self._body(member_ids=["999"]),
                 headers=AUTH_HEADERS,
             )
 
@@ -491,7 +491,7 @@ class TestCreateDeadline:
 
             client.post(
                 "/deadlines",
-                json=self._body(member_ids=[int(FAKE_USER.id)]),
+                json=self._body(member_ids=[str(int(FAKE_USER.id))]),
                 headers=AUTH_HEADERS,
             )
 

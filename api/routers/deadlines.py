@@ -44,9 +44,9 @@ async def list_deadlines(
                 title=dl.title,
                 description=dl.description,
                 due_date=dl.due_date,
-                created_by=dl.created_by,
+                created_by=str(dl.created_by),
                 created_at=dl.created_at,
-                member_ids=[m.user_id for m in members],
+                member_ids=[str(m.user_id) for m in members],
             )
         )
     return results
@@ -70,7 +70,8 @@ async def create_deadline(
 
     creator_id = int(current_user.id)
     # Deduplicate: always include the creator; preserve any additional members.
-    member_ids = list({creator_id, *body.member_ids})
+    # member_ids are strings (avoids JS int precision loss) — cast to int for DB.
+    member_ids = list({creator_id, *[int(x) for x in body.member_ids]})
 
     access = DeadlineAccess(creator_id)
     deadline = await access.create(
@@ -95,7 +96,7 @@ async def create_deadline(
         title=deadline.title,
         description=deadline.description,
         due_date=deadline.due_date,
-        created_by=deadline.created_by,
+        created_by=str(deadline.created_by),
         created_at=deadline.created_at,
-        member_ids=[m.user_id for m in members],
+        member_ids=[str(m.user_id) for m in members],
     )
