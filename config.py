@@ -23,7 +23,16 @@ class Settings(BaseSettings):
     # Reuse the same Discord application as the bot.
     discord_client_id: str | None = None
     discord_client_secret: str | None = None
+    # Railway injects $PORT; fall back to 8000 for local dev.
+    # pydantic-settings reads PORT automatically because the field alias matches.
     api_port: int = 8000
+
+    @property
+    def resolved_port(self) -> int:
+        """Return $PORT if set (Railway), otherwise api_port (local dev)."""
+        import os
+
+        return int(os.environ.get("PORT", self.api_port))
 
     # ── Microsoft Graph (all optional — omit to disable calendar sync) ────────
     # TODO: Populate and enable these when implementing calendar sync.

@@ -1,6 +1,6 @@
 import { getAccessToken } from "@raycast/utils";
 
-const API_BASE_URL = "https://deadline-manager-production.up.railway.app:8080";
+const API_BASE_URL = "https://deadline-manager-production.up.railway.app";
 
 // ── Types (mirroring api/schemas.py) ─────────────────────────────────────────
 

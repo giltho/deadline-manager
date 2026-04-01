@@ -26,6 +26,6 @@ COPY . .
 # Ensure the venv's bin directory is on PATH
 ENV PATH="/app/.venv/bin:$PATH"
 
-# Railway injects env vars; no .env file needed at runtime
-EXPOSE ${API_PORT:-8000}
+# Railway injects $PORT; fall back to 8000 for local dev.
+EXPOSE ${PORT:-8000}
 CMD ["python", "bot.py"]

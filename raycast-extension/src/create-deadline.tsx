@@ -7,7 +7,7 @@ interface FormValues {
   title: string;
   due_date: string;
   description: string;
-  member_search: string;
+  member_ids: string[];
 }
 
 interface Props {
@@ -25,7 +25,10 @@ function CreateDeadline({ onCreated }: Props) {
     [""],
   );
 
-  const { handleSubmit, itemProps, values, setValue } = useForm<FormValues>({
+  const { handleSubmit, itemProps } = useForm<FormValues>({
+    initialValues: {
+      member_ids: [],
+    },
     async onSubmit(vals) {
       const toast = await showToast({ style: Toast.Style.Animated, title: "Creating deadline..." });
       try {
@@ -33,7 +36,7 @@ function CreateDeadline({ onCreated }: Props) {
           title: vals.title.trim(),
           due_date: vals.due_date.trim(),
           description: vals.description.trim() || undefined,
-          member_ids: [], // members are not yet wired up via the search field
+          member_ids: vals.member_ids.map(Number),
         });
         toast.style = Toast.Style.Success;
         toast.title = "Deadline created";
@@ -83,24 +86,17 @@ function CreateDeadline({ onCreated }: Props) {
         placeholder="Optional description or notes"
       />
       <Form.Separator />
-      <Form.TextField
-        id="member_search"
-        title="Search Members"
-        placeholder="Type a username to search..."
-        value={values.member_search}
-        onChange={(q) => {
-          setValue("member_search", q);
-          revalidateSearch(q);
-        }}
-        info="Search guild members to view results below. Member assignment is shown here as a read-only preview."
-      />
-      {!isSearching && memberResults && memberResults.length > 0 && (
-        <Form.Description
-          title="Results"
-          text={memberResults.map((m) => `• ${displayName(m)} (${m.id})`).join("\n")}
-        />
-      )}
-      {isSearching && <Form.Description title="" text="Searching..." />}
+      <Form.TagPicker
+        {...itemProps.member_ids}
+        title="Members"
+        placeholder="Search by username..."
+        isLoading={isSearching}
+        onSearchTextChange={(q) => revalidateSearch(q)}
+      >
+        {(memberResults ?? []).map((m) => (
+          <Form.TagPicker.Item key={m.id} value={m.id} title={displayName(m)} />
+        ))}
+      </Form.TagPicker>
     </Form>
   );
 }

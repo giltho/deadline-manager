@@ -157,6 +157,65 @@ with patch.object(deadlines_module, "_get_deadline_by_title", new=AsyncMock(retu
 
 `mock_interaction.user.id` defaults to `123456789` (set in `conftest.py`).
 
+## Raycast Extension OAuth2
+
+The Raycast extension authenticates users via Discord OAuth2 using the **direct PKCE flow** (no proxy).
+
+### How the flow works
+
+```
+Raycast (oauth.ts)
+  → OAuth.PKCEClient (RedirectMethod.Web) generates PKCE values
+  → Opens https://discord.com/oauth2/authorize?...&redirect_uri=https://raycast.com/redirect?packageName=Extension
+  → User approves in browser; Discord redirects to raycast.com
+  → Raycast hands authorization code back to extension
+  → OAuthService POSTs to https://discord.com/api/oauth2/token (form-encoded) to exchange code for token
+  → Token stored by Raycast; attached as Authorization: Bearer <token> on every API call
+  → FastAPI (api/deps.py) validates the token by forwarding to https://discord.com/api/v10/users/@me
+```
+
+### Discord Developer Portal configuration
+
+In your Discord app (client ID `1484564963996598413`), under **OAuth2 → Redirects**, register **exactly**:
+
+```
+https://raycast.com/redirect?packageName=Extension
+```
+
+This is the static redirect URI that Raycast's `OAuth.RedirectMethod.Web` uses for all extensions.
+
+### Why no proxy?
+
+The `oauth.raycast.com` PKCE proxy exists for providers that don't support PKCE natively. Discord
+**does** support PKCE (code_challenge / code_verifier on its standard authorization endpoint), so
+the proxy is unnecessary and introduces confusion about which redirect URI to register.
+
+### Key implementation details
+
+- `bodyEncoding: "url-encoded"` is required — Discord's token endpoint only accepts
+  `application/x-www-form-urlencoded` bodies and returns an error for JSON.
+- The `DISCORD_CLIENT_SECRET` in `.env` is used by the server only; the Raycast extension
+  never sees it. The extension uses only `clientId` (public).
+- `api/deps.py` is fully stateless — it validates every request by forwarding the Bearer
+  token to `https://discord.com/api/v10/users/@me`.
+
+### Raycast extension API base URL
+
+The extension (`raycast-extension/src/api.ts`) calls the Railway-hosted FastAPI server.
+The URL must **not** include a port number:
+
+```ts
+// Correct — Railway's HTTPS ingress terminates TLS at port 443
+const API_BASE_URL = "https://deadline-manager-production.up.railway.app";
+
+// Wrong — port 8080 is the internal container port, not the public-facing one
+// const API_BASE_URL = "https://deadline-manager-production.up.railway.app:8080";
+```
+
+The `api_port` setting in `config.py` (default `8000`) is for local development and is
+the port uvicorn binds to inside the container. Railway routes external HTTPS traffic to
+it automatically.
+
 ## Known Gotchas
 
 1. **`from __future__ import annotations` in `models.py`** — must not be present; breaks SQLModel
@@ -173,6 +232,11 @@ with patch.object(deadlines_module, "_get_deadline_by_title", new=AsyncMock(retu
    as "already assigned". These are advisory and do not block CI.
 8. **Railway volume** — mount at `/data`; `db.py` reads `RAILWAY_VOLUME_MOUNT_PATH` env var
    to locate `deadlines.db`.
+9. **Railway `$PORT`** — Railway injects a `PORT` env var telling the container which port to
+   bind to. `config.py`'s `resolved_port` property reads `PORT` first, falling back to
+   `api_port` (default `8000`) for local dev. `bot.py` passes `settings.resolved_port` to
+   uvicorn. Never hardcode port `8000` or `8080` in the Railway service URL — Railway's HTTPS
+   ingress always listens on 443 externally regardless of the container port.
 
 ## Migrations (Alembic)
 
