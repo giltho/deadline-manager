@@ -18,7 +18,7 @@ from typing import Annotated
 import discord
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from api.deps import get_bot, get_current_user
+from api.deps import get_bot, get_current_guild_member
 from api.schemas import (
     DeadlineCreateRequest,
     DeadlineEditRequest,
@@ -54,7 +54,7 @@ async def list_deadlines(
         int | None,
         Query(description="Only show deadlines due within the next N days.", ge=1),
     ] = None,
-    current_user: DiscordUser = Depends(get_current_user),
+    current_user: DiscordUser = Depends(get_current_guild_member),
 ) -> list[DeadlineResponse]:
     """Return upcoming deadlines assigned to the authenticated user."""
     access = _user_access(current_user)
@@ -70,7 +70,7 @@ async def list_deadlines(
 @router.post("", response_model=DeadlineResponse, status_code=status.HTTP_201_CREATED)
 async def create_deadline(
     body: DeadlineCreateRequest,
-    current_user: DiscordUser = Depends(get_current_user),
+    current_user: DiscordUser = Depends(get_current_guild_member),
     bot: discord.Client = Depends(get_bot),
 ) -> DeadlineResponse:
     """Create a new deadline. The creator is always included in the assigned members."""
@@ -123,7 +123,7 @@ async def create_deadline(
 async def edit_deadline(
     deadline_id: int,
     body: DeadlineEditRequest,
-    current_user: DiscordUser = Depends(get_current_user),
+    current_user: DiscordUser = Depends(get_current_guild_member),
     bot: discord.Client = Depends(get_bot),
 ) -> DeadlineResponse:
     """
@@ -239,7 +239,7 @@ async def edit_deadline(
 @router.delete("/{deadline_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_deadline(
     deadline_id: int,
-    current_user: DiscordUser = Depends(get_current_user),
+    current_user: DiscordUser = Depends(get_current_guild_member),
     bot: discord.Client = Depends(get_bot),
 ) -> None:
     """Delete a deadline. Notifies all assigned members via DM."""

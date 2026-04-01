@@ -22,7 +22,7 @@ from typing import Annotated
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from api.deps import DISCORD_API_BASE, get_current_user
+from api.deps import DISCORD_API_BASE, get_current_guild_member
 from api.schemas import DiscordUser, GuildMember
 from config import Settings, get_settings
 
@@ -32,7 +32,7 @@ router = APIRouter(prefix="/guild", tags=["guild"])
 @router.get("/members/all", response_model=list[GuildMember])
 async def list_all_guild_members(
     # Auth required so only guild members can query this endpoint.
-    _current_user: DiscordUser = Depends(get_current_user),
+    _current_user: DiscordUser = Depends(get_current_guild_member),
     settings: Settings = Depends(get_settings),
 ) -> list[GuildMember]:
     """
@@ -90,7 +90,7 @@ async def search_guild_members(
         Query(description="Maximum number of results to return (1-25).", ge=1, le=25),
     ] = 25,
     # Auth required so only guild members can query this endpoint.
-    _current_user: DiscordUser = Depends(get_current_user),
+    _current_user: DiscordUser = Depends(get_current_guild_member),
     settings: Settings = Depends(get_settings),
 ) -> list[GuildMember]:
     """
@@ -143,7 +143,7 @@ async def get_guild_members(
         list[str],
         Query(description="Discord user IDs to resolve."),
     ],
-    _current_user: DiscordUser = Depends(get_current_user),
+    _current_user: DiscordUser = Depends(get_current_guild_member),
     settings: Settings = Depends(get_settings),
 ) -> list[GuildMember]:
     """

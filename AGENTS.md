@@ -36,8 +36,14 @@ discord_utils.py    notify_users(bot, user_ids, message) — sends DMs via the l
                     send_dm(bot, user_id, message) — sends a single DM; swallows Forbidden errors.
 api/main.py         FastAPI app factory: create_app(bot=None). Stores bot in app.state.bot.
                     CORS allows GET, POST, PATCH, DELETE.
-api/deps.py         FastAPI dependencies: get_current_user (validates Bearer token via Discord /users/@me),
-                    get_bot (retrieves bot from app.state.bot), get_settings.
+api/deps.py         FastAPI dependencies:
+                    - get_current_user: validates Bearer token via Discord /users/@me
+                    - get_current_guild_member: chains get_current_user + guild membership check
+                      via bot token (GET /guilds/{guild_id}/members/{user_id}). Returns 403
+                      for non-members, 503 on network error, 502 on unexpected Discord status.
+                      THIS is the dependency all routers use — not get_current_user directly.
+                    - get_bot: retrieves bot from app.state.bot
+                    - get_settings: returns Settings instance
 api/schemas.py      Pydantic schemas: DeadlineCreateRequest, DeadlineEditRequest, DeadlineResponse,
                     DiscordUser, GuildMember (with display_name property).
 api/routers/deadlines.py  REST endpoints for deadlines. All write ops call notify_users().
@@ -178,19 +184,30 @@ with patch.object(deadlines_module, "_get_deadline_by_title", new=AsyncMock(retu
 
 ### Patching pattern for API tests
 
-All write endpoints (`POST`, `PATCH`, `DELETE /deadlines`) depend on both `get_current_user`
+All write endpoints (`POST`, `PATCH`, `DELETE /deadlines`) depend on both `get_current_guild_member`
 and `get_bot`. Use the `mock_auth_and_bot` fixture for these; use `mock_auth` for read-only
 endpoints; use `mock_auth_and_settings` for guild endpoints.
+
+**Always override `get_current_guild_member`, not `get_current_user`.** All routers declare
+`get_current_guild_member` as their dependency; overriding only the inner `get_current_user`
+has no effect because FastAPI resolves the outermost declared dependency.
 
 ```python
 @pytest.fixture()
 def mock_auth_and_bot(app):
-    from api.deps import get_bot, get_current_user
+    from api.deps import get_bot, get_current_guild_member
     fake_bot = MagicMock()
-    app.dependency_overrides[get_current_user] = lambda: FAKE_USER
+    app.dependency_overrides[get_current_guild_member] = lambda: FAKE_USER
     app.dependency_overrides[get_bot] = lambda: fake_bot
     yield fake_bot
     app.dependency_overrides.clear()
+```
+
+When testing the real `get_current_guild_member` dependency chain (e.g. `TestAuth`), also
+override `get_settings` so pydantic-settings doesn't try to read a missing `.env`:
+
+```python
+app.dependency_overrides[get_settings] = lambda: FAKE_SETTINGS
 ```
 
 Always patch `api.routers.deadlines.notify_users` (not `discord_utils.notify_users`) in API
@@ -351,6 +368,13 @@ it automatically.
     twice in `PATCH /deadlines/{id}` (once for the diff, once for the final response). In tests,
     set `mock_get_members.side_effect = [list1, list2]` with plain list values, not pre-awaited
     coroutines. See patching pattern section above.
+13. **Override `get_current_guild_member`, not `get_current_user` in API tests** — all routers
+    use `get_current_guild_member` as their outermost auth dependency. Overriding the inner
+    `get_current_user` has no effect because FastAPI resolves the outermost declared dependency
+    and never reaches the inner one. Always use `app.dependency_overrides[get_current_guild_member]`.
+14. **`get_current_guild_member` requires `get_settings`** — when testing the real auth chain
+    (not using a fixture shortcut), also override `get_settings` with `lambda: FAKE_SETTINGS` to
+    prevent pydantic-settings from failing on a missing `.env` file.
 
 ## Migrations (Alembic)
 

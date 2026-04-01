@@ -1,15 +1,17 @@
 """
-FastAPI dependency: resolve the current Discord user from the Bearer token.
+FastAPI dependencies: Discord auth and bot access.
 
 Every protected endpoint injects
-`current_user: DiscordUser = Depends(get_current_user)`.
+`current_user: DiscordUser = Depends(get_current_guild_member)`.
 Auth is fully stateless — no sessions or JWTs are stored server-side.
 
 Flow:
   1. Client sends `Authorization: Bearer <discord_oauth_token>`.
-  2. We forward the token to Discord's `/users/@me` endpoint.
-  3. Discord validates it and returns the user's profile.
-  4. We return a `DiscordUser` for the rest of the request handler.
+  2. get_current_user: forward token to Discord's /users/@me → DiscordUser.
+  3. get_current_guild_member: call GET /guilds/{id}/members/{user_id} with
+     the bot token to verify the user is actually in our guild.
+     Returns 401 for bad tokens, 403 for valid-but-not-in-guild users,
+     503/502 for Discord API problems.
 
 `get_bot()` provides the live `discord.Client` so routers can send DMs.
 It raises HTTP 503 when the bot is not wired in (e.g. during unit tests that
@@ -26,6 +28,7 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from api.schemas import DiscordUser
+from config import Settings, get_settings
 
 if TYPE_CHECKING:
     pass
@@ -76,6 +79,43 @@ async def get_current_user(
         global_name=data.get("global_name"),
         avatar=data.get("avatar"),
     )
+
+
+async def get_current_guild_member(
+    current_user: DiscordUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+) -> DiscordUser:
+    """
+    Extend get_current_user by verifying the user is a member of our guild.
+
+    Calls GET /guilds/{guild_id}/members/{user_id} with the bot token.
+    Raises HTTP 403 if the user is not in the guild.
+    """
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                f"{DISCORD_API_BASE}/guilds/{settings.discord_guild_id}/members/{current_user.id}",
+                headers={"Authorization": f"Bot {settings.discord_token}"},
+                timeout=10.0,
+            )
+    except httpx.RequestError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not reach Discord API.",
+        ) from exc
+
+    if resp.status_code == 404:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not a member of this server.",
+        )
+    if resp.status_code != 200:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Discord API returned unexpected status {resp.status_code}.",
+        )
+
+    return current_user
 
 
 def get_bot(request: Request) -> discord.Client:

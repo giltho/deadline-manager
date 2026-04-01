@@ -79,10 +79,10 @@ def client(app):
 
 @pytest.fixture()
 def mock_auth(app):
-    """Override the get_current_user dependency to return FAKE_USER."""
-    from api.deps import get_current_user
+    """Override the get_current_guild_member dependency to return FAKE_USER."""
+    from api.deps import get_current_guild_member
 
-    app.dependency_overrides[get_current_user] = lambda: FAKE_USER
+    app.dependency_overrides[get_current_guild_member] = lambda: FAKE_USER
     yield
     app.dependency_overrides.clear()
 
@@ -94,10 +94,10 @@ FAKE_SETTINGS.discord_token = "bot-test-token"
 
 @pytest.fixture()
 def mock_auth_and_settings(app):
-    """Override both get_current_user and get_settings dependencies."""
-    from api.deps import get_current_user
+    """Override both get_current_guild_member and get_settings dependencies."""
+    from api.deps import get_current_guild_member
 
-    app.dependency_overrides[get_current_user] = lambda: FAKE_USER
+    app.dependency_overrides[get_current_guild_member] = lambda: FAKE_USER
     app.dependency_overrides[get_settings] = lambda: FAKE_SETTINGS
     yield
     app.dependency_overrides.clear()
@@ -116,11 +116,14 @@ def mock_bot(app):
 
 @pytest.fixture()
 def mock_auth_and_bot(app):
-    """Override get_current_user and get_bot together (most write-endpoint tests)."""
-    from api.deps import get_bot, get_current_user
+    """Override get_current_guild_member and get_bot together.
+
+    Used by most write-endpoint tests.
+    """
+    from api.deps import get_bot, get_current_guild_member
 
     fake_bot = MagicMock()
-    app.dependency_overrides[get_current_user] = lambda: FAKE_USER
+    app.dependency_overrides[get_current_guild_member] = lambda: FAKE_USER
     app.dependency_overrides[get_bot] = lambda: fake_bot
     yield fake_bot
     app.dependency_overrides.clear()
@@ -190,35 +193,137 @@ class TestAuth:
 
         assert resp.status_code == 503
 
-    def test_valid_token_calls_discord_users_me(self, client):
-        """A valid token calls /users/@me and the request proceeds."""
+    def test_valid_token_calls_discord_users_me(self, client, app):
+        """A valid token calls /users/@me and the guild membership check proceeds."""
         discord_user_payload = {
             "id": "123456789",
             "username": "testuser",
             "global_name": "Test User",
             "avatar": None,
         }
-        with patch("api.deps.httpx.AsyncClient") as mock_cls:
-            mock_resp = MagicMock()
-            mock_resp.status_code = 200
-            mock_resp.json = MagicMock(return_value=discord_user_payload)
-            mock_client = AsyncMock()
-            mock_client.get = AsyncMock(return_value=mock_resp)
-            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+        # /users/@me → 200, /guilds/.../members/... → 200
+        me_resp = MagicMock()
+        me_resp.status_code = 200
+        me_resp.json = MagicMock(return_value=discord_user_payload)
 
-            with patch("api.routers.deadlines.DeadlineAccess") as mock_access_cls:
-                mock_access = AsyncMock()
-                mock_access.list_upcoming = AsyncMock(return_value=[])
-                mock_access_cls.return_value = mock_access
+        guild_resp = MagicMock()
+        guild_resp.status_code = 200
 
-                resp = client.get("/deadlines", headers=AUTH_HEADERS)
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(side_effect=[me_resp, guild_resp])
+
+        mock_ctx = MagicMock()
+        mock_ctx.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_ctx.__aexit__ = AsyncMock(return_value=False)
+
+        app.dependency_overrides[get_settings] = lambda: FAKE_SETTINGS
+        try:
+            with patch("api.deps.httpx.AsyncClient", return_value=mock_ctx):
+                with patch("api.routers.deadlines.DeadlineAccess") as mock_access_cls:
+                    mock_access = AsyncMock()
+                    mock_access.list_upcoming = AsyncMock(return_value=[])
+                    mock_access_cls.return_value = mock_access
+
+                    resp = client.get("/deadlines", headers=AUTH_HEADERS)
+        finally:
+            app.dependency_overrides.pop(get_settings, None)
 
         assert resp.status_code == 200
-        # Verify the correct Discord endpoint was called
-        call_args = mock_client.get.call_args
-        assert "/users/@me" in call_args[0][0]
-        assert call_args[1]["headers"]["Authorization"] == f"Bearer {FAKE_TOKEN}"
+        first_call = mock_client.get.call_args_list[0]
+        assert "/users/@me" in first_call[0][0]
+        assert first_call[1]["headers"]["Authorization"] == f"Bearer {FAKE_TOKEN}"
+
+    def test_non_guild_member_returns_403(self, client, app):
+        """Valid token but user is not in the guild → 403."""
+        discord_user_payload = {
+            "id": "123456789",
+            "username": "outsider",
+            "global_name": None,
+            "avatar": None,
+        }
+        me_resp = MagicMock()
+        me_resp.status_code = 200
+        me_resp.json = MagicMock(return_value=discord_user_payload)
+
+        guild_resp = MagicMock()
+        guild_resp.status_code = 404
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(side_effect=[me_resp, guild_resp])
+
+        mock_ctx = MagicMock()
+        mock_ctx.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_ctx.__aexit__ = AsyncMock(return_value=False)
+
+        app.dependency_overrides[get_settings] = lambda: FAKE_SETTINGS
+        try:
+            with patch("api.deps.httpx.AsyncClient", return_value=mock_ctx):
+                resp = client.get("/deadlines", headers=AUTH_HEADERS)
+        finally:
+            app.dependency_overrides.pop(get_settings, None)
+
+        assert resp.status_code == 403
+
+    def test_guild_check_network_error_returns_503(self, client, app):
+        """Network error on the guild membership check → 503."""
+        discord_user_payload = {
+            "id": "123456789",
+            "username": "testuser",
+            "global_name": None,
+            "avatar": None,
+        }
+        me_resp = MagicMock()
+        me_resp.status_code = 200
+        me_resp.json = MagicMock(return_value=discord_user_payload)
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(
+            side_effect=[me_resp, httpx.ConnectError("refused")]
+        )
+
+        mock_ctx = MagicMock()
+        mock_ctx.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_ctx.__aexit__ = AsyncMock(return_value=False)
+
+        app.dependency_overrides[get_settings] = lambda: FAKE_SETTINGS
+        try:
+            with patch("api.deps.httpx.AsyncClient", return_value=mock_ctx):
+                resp = client.get("/deadlines", headers=AUTH_HEADERS)
+        finally:
+            app.dependency_overrides.pop(get_settings, None)
+
+        assert resp.status_code == 503
+
+    def test_guild_check_unexpected_status_returns_502(self, client, app):
+        """Unexpected status from Discord on the guild check → 502."""
+        discord_user_payload = {
+            "id": "123456789",
+            "username": "testuser",
+            "global_name": None,
+            "avatar": None,
+        }
+        me_resp = MagicMock()
+        me_resp.status_code = 200
+        me_resp.json = MagicMock(return_value=discord_user_payload)
+
+        guild_resp = MagicMock()
+        guild_resp.status_code = 500
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(side_effect=[me_resp, guild_resp])
+
+        mock_ctx = MagicMock()
+        mock_ctx.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_ctx.__aexit__ = AsyncMock(return_value=False)
+
+        app.dependency_overrides[get_settings] = lambda: FAKE_SETTINGS
+        try:
+            with patch("api.deps.httpx.AsyncClient", return_value=mock_ctx):
+                resp = client.get("/deadlines", headers=AUTH_HEADERS)
+        finally:
+            app.dependency_overrides.pop(get_settings, None)
+
+        assert resp.status_code == 502
 
 
 # ══════════════════════════════════════════════════════════════════════════════
