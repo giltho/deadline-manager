@@ -73,6 +73,11 @@ export async function createDeadline(body: DeadlineCreateRequest): Promise<Deadl
   });
 }
 
+export async function getAllMembers(): Promise<GuildMember[]> {
+  console.log(`[api] getAllMembers`);
+  return apiFetch<GuildMember[]>("/guild/members/all");
+}
+
 export async function searchMembers(query: string, limit = 10): Promise<GuildMember[]> {
   const params = new URLSearchParams({ query, limit: String(limit) });
   console.log(`[api] searchMembers query="${query}" limit=${limit}`);

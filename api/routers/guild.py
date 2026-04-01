@@ -1,6 +1,10 @@
 """
 /guild endpoints.
 
+GET /guild/members/all
+    List up to 1000 guild members.
+    Requires the GUILD_MEMBERS privileged intent to be enabled on the bot.
+
 GET /guild/members/search?query=<str>&limit=<int>
     Search guild members by username or nickname prefix.
     Proxied to Discord's REST API using the bot token.
@@ -23,6 +27,56 @@ from api.schemas import DiscordUser, GuildMember
 from config import Settings, get_settings
 
 router = APIRouter(prefix="/guild", tags=["guild"])
+
+
+@router.get("/members/all", response_model=list[GuildMember])
+async def list_all_guild_members(
+    # Auth required so only guild members can query this endpoint.
+    _current_user: DiscordUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+) -> list[GuildMember]:
+    """
+    List up to 1000 guild members.
+
+    Uses Discord's List Guild Members endpoint, which requires the
+    GUILD_MEMBERS privileged intent to be enabled on the bot.
+    """
+    guild_id = settings.discord_guild_id
+    bot_token = settings.discord_token
+
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                f"{DISCORD_API_BASE}/guilds/{guild_id}/members",
+                params={"limit": 1000},
+                headers={"Authorization": f"Bot {bot_token}"},
+                timeout=10.0,
+            )
+    except httpx.RequestError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not reach Discord API.",
+        ) from exc
+
+    if resp.status_code != 200:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Discord API returned unexpected status {resp.status_code}.",
+        )
+
+    members: list[GuildMember] = []
+    for raw in resp.json():
+        user = raw.get("user", {})
+        members.append(
+            GuildMember(
+                id=user["id"],
+                username=user.get("username", ""),
+                global_name=user.get("global_name"),
+                nick=raw.get("nick"),
+                avatar=user.get("avatar"),
+            )
+        )
+    return members
 
 
 @router.get("/members/search", response_model=list[GuildMember])

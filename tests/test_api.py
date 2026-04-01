@@ -500,6 +500,117 @@ class TestCreateDeadline:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# GET /guild/members/all
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+class TestListAllGuildMembers:
+    DISCORD_MEMBERS_PAYLOAD = [
+        {
+            "user": {
+                "id": "111",
+                "username": "alice",
+                "global_name": "Alice",
+                "avatar": None,
+            },
+            "nick": "Ali",
+        },
+        {
+            "user": {
+                "id": "222",
+                "username": "bob",
+                "global_name": None,
+                "avatar": None,
+            },
+            "nick": None,
+        },
+    ]
+
+    def _mock_discord_list(self, payload):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json = MagicMock(return_value=payload)
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_resp)
+        mock_ctx = AsyncMock()
+        mock_ctx.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_ctx.__aexit__ = AsyncMock(return_value=False)
+        return mock_ctx, mock_client
+
+    def test_returns_members(self, client, mock_auth_and_settings):
+        mock_ctx, _ = self._mock_discord_list(self.DISCORD_MEMBERS_PAYLOAD)
+        with patch("api.routers.guild.httpx.AsyncClient", return_value=mock_ctx):
+            resp = client.get("/guild/members/all", headers=AUTH_HEADERS)
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) == 2
+        assert data[0]["id"] == "111"
+        assert data[0]["username"] == "alice"
+        assert data[0]["global_name"] == "Alice"
+        assert data[0]["nick"] == "Ali"
+        assert data[1]["id"] == "222"
+        assert data[1]["nick"] is None
+
+    def test_requests_limit_1000(self, client, mock_auth_and_settings):
+        mock_ctx, mock_client = self._mock_discord_list([])
+        with patch("api.routers.guild.httpx.AsyncClient", return_value=mock_ctx):
+            client.get("/guild/members/all", headers=AUTH_HEADERS)
+
+        call_kwargs = mock_client.get.call_args[1]
+        assert call_kwargs["params"]["limit"] == 1000
+
+    def test_uses_bot_token(self, client, mock_auth_and_settings):
+        mock_ctx, mock_client = self._mock_discord_list([])
+        with patch("api.routers.guild.httpx.AsyncClient", return_value=mock_ctx):
+            client.get("/guild/members/all", headers=AUTH_HEADERS)
+
+        call_kwargs = mock_client.get.call_args[1]
+        assert (
+            call_kwargs["headers"]["Authorization"]
+            == f"Bot {FAKE_SETTINGS.discord_token}"
+        )
+
+    def test_requires_auth(self, client):
+        resp = client.get("/guild/members/all")
+        assert resp.status_code == 401
+
+    def test_discord_error_returns_502(self, client, mock_auth_and_settings):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 500
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_resp)
+        mock_ctx = AsyncMock()
+        mock_ctx.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_ctx.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("api.routers.guild.httpx.AsyncClient", return_value=mock_ctx):
+            resp = client.get("/guild/members/all", headers=AUTH_HEADERS)
+
+        assert resp.status_code == 502
+
+    def test_network_error_returns_503(self, client, mock_auth_and_settings):
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(side_effect=httpx.ConnectError("refused"))
+        mock_ctx = AsyncMock()
+        mock_ctx.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_ctx.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("api.routers.guild.httpx.AsyncClient", return_value=mock_ctx):
+            resp = client.get("/guild/members/all", headers=AUTH_HEADERS)
+
+        assert resp.status_code == 503
+
+    def test_returns_empty_list_when_no_members(self, client, mock_auth_and_settings):
+        mock_ctx, _ = self._mock_discord_list([])
+        with patch("api.routers.guild.httpx.AsyncClient", return_value=mock_ctx):
+            resp = client.get("/guild/members/all", headers=AUTH_HEADERS)
+
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # GET /guild/members/search
 # ══════════════════════════════════════════════════════════════════════════════
 
