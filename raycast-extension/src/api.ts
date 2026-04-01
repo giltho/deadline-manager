@@ -33,7 +33,9 @@ export interface GuildMember {
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const { token } = getAccessToken();
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const url = `${API_BASE_URL}${path}`;
+  console.log(`[api] ${init?.method ?? "GET"} ${url}`);
+  const response = await fetch(url, {
     ...init,
     headers: {
       "Content-Type": "application/json",
@@ -42,12 +44,17 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
     },
   });
 
+  console.log(`[api] response ${response.status} for ${url}`);
+
   if (!response.ok) {
     const text = await response.text().catch(() => response.statusText);
+    console.error(`[api] error body: ${text}`);
     throw new Error(`API error ${response.status}: ${text}`);
   }
 
-  return response.json() as Promise<T>;
+  const data = await response.json();
+  console.log(`[api] response body:`, JSON.stringify(data).slice(0, 500));
+  return data as T;
 }
 
 // ── API calls ─────────────────────────────────────────────────────────────────
@@ -66,11 +73,16 @@ export async function createDeadline(body: DeadlineCreateRequest): Promise<Deadl
 
 export async function searchMembers(query: string, limit = 10): Promise<GuildMember[]> {
   const params = new URLSearchParams({ query, limit: String(limit) });
+  console.log(`[api] searchMembers query="${query}" limit=${limit}`);
   return apiFetch<GuildMember[]>(`/guild/members/search?${params}`);
 }
 
 export async function getMembers(ids: number[]): Promise<GuildMember[]> {
-  if (ids.length === 0) return [];
+  console.log(`[api] getMembers ids=${JSON.stringify(ids)}`);
+  if (ids.length === 0) {
+    console.log(`[api] getMembers: empty ids, returning []`);
+    return [];
+  }
   const params = new URLSearchParams();
   ids.forEach((id) => params.append("ids", String(id)));
   return apiFetch<GuildMember[]>(`/guild/members?${params}`);

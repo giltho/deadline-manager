@@ -47,10 +47,36 @@ function DeadlineDetail({ deadline }: { deadline: DeadlineResponse }) {
     year: "numeric",
   });
 
-  const { isLoading: isLoadingMembers, data: members } = usePromise(
-    (ids: number[]) => getMembers(ids),
-    [deadline.member_ids],
+  console.log(`[DeadlineDetail] deadline.id=${deadline.id} created_by=${deadline.created_by} member_ids=${JSON.stringify(deadline.member_ids)}`);
+
+  // Resolve all involved user IDs: members + creator (deduplicated).
+  const allIds = Array.from(new Set([deadline.created_by, ...deadline.member_ids]));
+  console.log(`[DeadlineDetail] allIds to resolve: ${JSON.stringify(allIds)}`);
+
+  const { isLoading: isLoadingMembers, data: resolvedMembers, error: membersError } = usePromise(
+    (ids: number[]) => {
+      console.log(`[DeadlineDetail] usePromise firing with ids=${JSON.stringify(ids)}`);
+      return getMembers(ids);
+    },
+    [allIds],
   );
+
+  console.log(`[DeadlineDetail] isLoadingMembers=${isLoadingMembers} resolvedMembers=${JSON.stringify(resolvedMembers)} error=${membersError}`);
+
+  // Build a lookup map from id (string) → GuildMember.
+  const memberMap = new Map<string, GuildMember>(
+    (resolvedMembers ?? []).map((m) => [m.id, m]),
+  );
+
+  const creatorMember = memberMap.get(String(deadline.created_by));
+  const creatorName = creatorMember ? memberDisplayName(creatorMember) : `User ${deadline.created_by}`;
+
+  // Assigned members are only deadline.member_ids (not the raw allIds union).
+  const assignedMembers = deadline.member_ids
+    .map((id) => memberMap.get(String(id)))
+    .filter((m): m is GuildMember => m !== undefined);
+
+  console.log(`[DeadlineDetail] creatorName=${creatorName} assignedMembers=${JSON.stringify(assignedMembers?.map((m) => m.username))}`);
 
   const descriptionSection = deadline.description ? `## Description\n\n${deadline.description}\n\n` : "";
   const markdown = `# ${deadline.title}\n\n${descriptionSection}**Due:** ${formattedDate}`;
@@ -63,8 +89,10 @@ function DeadlineDetail({ deadline }: { deadline: DeadlineResponse }) {
         <List.Item.Detail.Metadata>
           <List.Item.Detail.Metadata.Label title="Due Date" text={formattedDate} />
           <List.Item.Detail.Metadata.Separator />
-          {members && members.length > 0 ? (
-            members.map((m) => (
+          <List.Item.Detail.Metadata.Label title="Created By" text={creatorName} />
+          <List.Item.Detail.Metadata.Separator />
+          {assignedMembers.length > 0 ? (
+            assignedMembers.map((m) => (
               <List.Item.Detail.Metadata.Label
                 key={m.id}
                 title="Member"
@@ -88,7 +116,9 @@ function DeadlineDetail({ deadline }: { deadline: DeadlineResponse }) {
 
 function ListDeadlines() {
   const { push } = useNavigation();
-  const { isLoading, data: deadlines, revalidate } = usePromise(listDeadlines);
+  const { isLoading, data: deadlines, revalidate, error: listError } = usePromise(listDeadlines);
+
+  console.log(`[ListDeadlines] isLoading=${isLoading} deadlines=${JSON.stringify(deadlines?.map((d) => ({ id: d.id, member_ids: d.member_ids })))} error=${listError}`);
 
   return (
     <List
