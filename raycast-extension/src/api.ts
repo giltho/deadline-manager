@@ -68,3 +68,10 @@ export async function searchMembers(query: string, limit = 10): Promise<GuildMem
   const params = new URLSearchParams({ query, limit: String(limit) });
   return apiFetch<GuildMember[]>(`/guild/members/search?${params}`);
 }
+
+export async function getMembers(ids: number[]): Promise<GuildMember[]> {
+  if (ids.length === 0) return [];
+  const params = new URLSearchParams();
+  ids.forEach((id) => params.append("ids", String(id)));
+  return apiFetch<GuildMember[]>(`/guild/members?${params}`);
+}

@@ -1,6 +1,6 @@
 import { Action, ActionPanel, Color, Icon, List, useNavigation } from "@raycast/api";
 import { usePromise, withAccessToken } from "@raycast/utils";
-import { listDeadlines, type DeadlineResponse } from "./api";
+import { listDeadlines, getMembers, type DeadlineResponse, type GuildMember } from "./api";
 import { authorize } from "./oauth";
 import CreateDeadline from "./create-deadline";
 
@@ -35,6 +35,10 @@ function dueDateAccessory(iso: string): List.Item.Accessory {
   }
 }
 
+function memberDisplayName(m: GuildMember): string {
+  return m.nick ?? m.global_name ?? m.username;
+}
+
 function DeadlineDetail({ deadline }: { deadline: DeadlineResponse }) {
   const formattedDate = formatDueDate(deadline.due_date);
   const formattedCreatedAt = new Date(deadline.created_at).toLocaleDateString("en-GB", {
@@ -43,20 +47,38 @@ function DeadlineDetail({ deadline }: { deadline: DeadlineResponse }) {
     year: "numeric",
   });
 
+  const { isLoading: isLoadingMembers, data: members } = usePromise(
+    (ids: number[]) => getMembers(ids),
+    [deadline.member_ids],
+  );
+
   const descriptionSection = deadline.description ? `## Description\n\n${deadline.description}\n\n` : "";
   const markdown = `# ${deadline.title}\n\n${descriptionSection}**Due:** ${formattedDate}`;
 
   return (
     <List.Item.Detail
+      isLoading={isLoadingMembers}
       markdown={markdown}
       metadata={
         <List.Item.Detail.Metadata>
           <List.Item.Detail.Metadata.Label title="Due Date" text={formattedDate} />
           <List.Item.Detail.Metadata.Separator />
-          <List.Item.Detail.Metadata.Label title="Members Assigned" text={String(deadline.member_ids.length)} />
-          <List.Item.Detail.Metadata.Label title="Created By" text={`User ${deadline.created_by}`} />
-          <List.Item.Detail.Metadata.Label title="Created At" text={formattedCreatedAt} />
+          {members && members.length > 0 ? (
+            members.map((m) => (
+              <List.Item.Detail.Metadata.Label
+                key={m.id}
+                title="Member"
+                text={memberDisplayName(m)}
+              />
+            ))
+          ) : (
+            <List.Item.Detail.Metadata.Label
+              title="Members"
+              text={isLoadingMembers ? "Loading…" : "None assigned"}
+            />
+          )}
           <List.Item.Detail.Metadata.Separator />
+          <List.Item.Detail.Metadata.Label title="Created At" text={formattedCreatedAt} />
           <List.Item.Detail.Metadata.Label title="ID" text={String(deadline.id)} />
         </List.Item.Detail.Metadata>
       }

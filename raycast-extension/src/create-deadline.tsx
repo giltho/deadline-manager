@@ -1,5 +1,6 @@
 import { Action, ActionPanel, Form, showToast, Toast, useNavigation } from "@raycast/api";
 import { useForm, FormValidation, withAccessToken, usePromise } from "@raycast/utils";
+import { useState } from "react";
 import { createDeadline, searchMembers, type GuildMember } from "./api";
 import { authorize } from "./oauth";
 
@@ -16,13 +17,14 @@ interface Props {
 
 function CreateDeadline({ onCreated }: Props) {
   const { pop } = useNavigation();
+  const [searchQuery, setSearchQuery] = useState("");
 
-  const { isLoading: isSearching, data: memberResults, revalidate: revalidateSearch } = usePromise(
+  const { isLoading: isSearching, data: memberResults } = usePromise(
     async (query: string) => {
       if (!query || query.trim().length < 1) return [];
       return searchMembers(query.trim(), 10);
     },
-    [""],
+    [searchQuery],
   );
 
   const { handleSubmit, itemProps } = useForm<FormValues>({
@@ -91,7 +93,7 @@ function CreateDeadline({ onCreated }: Props) {
         title="Members"
         placeholder="Search by username..."
         isLoading={isSearching}
-        onSearchTextChange={(q) => revalidateSearch(q)}
+        onSearchTextChange={(q) => setSearchQuery(q)}
       >
         {(memberResults ?? []).map((m) => (
           <Form.TagPicker.Item key={m.id} value={m.id} title={displayName(m)} />

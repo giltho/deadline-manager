@@ -5,6 +5,10 @@ GET /guild/members/search?query=<str>&limit=<int>
     Search guild members by username or nickname prefix.
     Proxied to Discord's REST API using the bot token.
     Does NOT require the GUILD_MEMBERS privileged intent.
+
+GET /guild/members?ids=<id1>&ids=<id2>...
+    Resolve a list of Discord user IDs to GuildMember objects.
+    Uses the bot token to fetch each member from the guild.
 """
 
 from __future__ import annotations
@@ -76,4 +80,51 @@ async def search_guild_members(
                 avatar=user.get("avatar"),
             )
         )
+    return members
+
+
+@router.get("/members", response_model=list[GuildMember])
+async def get_guild_members(
+    ids: Annotated[
+        list[str],
+        Query(description="Discord user IDs to resolve."),
+    ],
+    _current_user: DiscordUser = Depends(get_current_user),
+    settings: Settings = Depends(get_settings),
+) -> list[GuildMember]:
+    """
+    Resolve a list of Discord user IDs to GuildMember objects.
+
+    Fetches each member individually from the guild using the bot token.
+    IDs that cannot be found are silently omitted from the result.
+    """
+    guild_id = settings.discord_guild_id
+    bot_token = settings.discord_token
+
+    members: list[GuildMember] = []
+    async with httpx.AsyncClient() as client:
+        for user_id in ids:
+            try:
+                resp = await client.get(
+                    f"{DISCORD_API_BASE}/guilds/{guild_id}/members/{user_id}",
+                    headers={"Authorization": f"Bot {bot_token}"},
+                    timeout=10.0,
+                )
+            except httpx.RequestError:
+                continue  # skip unreachable
+
+            if resp.status_code != 200:
+                continue  # member not found or left the guild — skip silently
+
+            raw = resp.json()
+            user = raw.get("user", {})
+            members.append(
+                GuildMember(
+                    id=user["id"],
+                    username=user.get("username", ""),
+                    global_name=user.get("global_name"),
+                    nick=raw.get("nick"),
+                    avatar=user.get("avatar"),
+                )
+            )
     return members
