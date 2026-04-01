@@ -1,6 +1,5 @@
 import { Action, ActionPanel, Form, showToast, Toast, useNavigation } from "@raycast/api";
 import { useForm, FormValidation, withAccessToken, usePromise } from "@raycast/utils";
-import { useState } from "react";
 import { createDeadline, searchMembers, type GuildMember } from "./api";
 import { authorize } from "./oauth";
 
@@ -17,14 +16,11 @@ interface Props {
 
 function CreateDeadline({ onCreated }: Props) {
   const { pop } = useNavigation();
-  const [searchQuery, setSearchQuery] = useState("");
 
+  // Pre-load up to 25 members on mount so Form.TagPicker has items to filter.
+  // Form.TagPicker does not support onSearchTextChange — filtering is client-side only.
   const { isLoading: isSearching, data: memberResults } = usePromise(
-    async (query: string) => {
-      if (!query || query.trim().length < 1) return [];
-      return searchMembers(query.trim(), 10);
-    },
-    [searchQuery],
+    () => searchMembers(" ", 25),
   );
 
   const { handleSubmit, itemProps } = useForm<FormValues>({
@@ -91,9 +87,8 @@ function CreateDeadline({ onCreated }: Props) {
       <Form.TagPicker
         {...itemProps.member_ids}
         title="Members"
-        placeholder="Search by username..."
+        placeholder="Filter members..."
         isLoading={isSearching}
-        onSearchTextChange={(q) => setSearchQuery(q)}
       >
         {(memberResults ?? []).map((m) => (
           <Form.TagPicker.Item key={m.id} value={m.id} title={displayName(m)} />
