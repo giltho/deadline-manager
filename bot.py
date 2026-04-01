@@ -8,7 +8,8 @@ Startup sequence:
   4. Register a global error handler for slash command check failures
   5. Load cogs (Reminders first so the scheduler is running before commands fire)
   6. Sync slash commands to the configured guild
-  7. Connect to Discord
+  7. Start the FastAPI server (uvicorn) alongside the Discord bot
+  8. Connect to Discord
 """
 
 from __future__ import annotations
@@ -17,11 +18,13 @@ import asyncio
 import logging
 
 import discord
+import uvicorn
 from alembic import command as alembic_command
 from alembic.config import Config as AlembicConfig
 from discord import app_commands
 from discord.ext import commands
 
+from api.main import create_app
 from config import get_settings
 from db import init_db
 
@@ -98,8 +101,25 @@ class DeadlineBot(commands.Bot):
 async def main() -> None:
     settings = get_settings()
     bot = DeadlineBot()
+
+    # Build the FastAPI app and configure uvicorn to use the running event loop.
+    app = create_app()
+    uvicorn_config = uvicorn.Config(
+        app,
+        host="0.0.0.0",
+        port=settings.api_port,
+        log_level="info",
+        # loop="none" tells uvicorn not to create its own event loop; it will
+        # use the one that is already running (the same loop as the Discord bot).
+        loop="none",
+    )
+    api_server = uvicorn.Server(uvicorn_config)
+
     async with bot:
-        await bot.start(settings.discord_token)
+        await asyncio.gather(
+            bot.start(settings.discord_token),
+            api_server.serve(),
+        )
 
 
 if __name__ == "__main__":

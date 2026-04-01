@@ -27,4 +27,5 @@ COPY . .
 ENV PATH="/app/.venv/bin:$PATH"
 
 # Railway injects env vars; no .env file needed at runtime
+EXPOSE ${API_PORT:-8000}
 CMD ["python", "bot.py"]

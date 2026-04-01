@@ -18,6 +18,13 @@ class Settings(BaseSettings):
     deadline_channel_id: int
     reminder_channel_id: int
 
+    # ── REST API ──────────────────────────────────────────────────────────────
+    # OAuth2 credentials for the Raycast extension.
+    # Reuse the same Discord application as the bot.
+    discord_client_id: str | None = None
+    discord_client_secret: str | None = None
+    api_port: int = 8000
+
     # ── Microsoft Graph (all optional — omit to disable calendar sync) ────────
     # TODO: Populate and enable these when implementing calendar sync.
     ms_tenant_id: str | None = None

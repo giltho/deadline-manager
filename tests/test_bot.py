@@ -12,6 +12,7 @@ Strategy:
 
 from __future__ import annotations
 
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -58,7 +59,7 @@ async def test_tree_error_check_failure_replies_ephemerally() -> None:
     interaction = _make_interaction(is_done=False)
     error = app_commands.CheckFailure("This command must be used in #deadlines.")
 
-    await bot.tree.on_error(interaction, error)
+    await cast(AsyncMock, bot.tree.on_error)(interaction, error)
 
     interaction.response.send_message.assert_awaited_once_with(
         "This command must be used in #deadlines.", ephemeral=True
@@ -75,7 +76,7 @@ async def test_tree_error_check_failure_uses_followup_when_response_done() -> No
     interaction = _make_interaction(is_done=True)
     error = app_commands.CheckFailure("This command must be used in #deadlines.")
 
-    await bot.tree.on_error(interaction, error)
+    await cast(AsyncMock, bot.tree.on_error)(interaction, error)
 
     interaction.followup.send.assert_awaited_once_with(
         "This command must be used in #deadlines.", ephemeral=True
@@ -95,7 +96,7 @@ async def test_tree_error_unexpected_error_sends_generic_message(
     interaction = _make_interaction(is_done=False)
     error = app_commands.AppCommandError("something exploded")
 
-    await bot.tree.on_error(interaction, error)
+    await cast(AsyncMock, bot.tree.on_error)(interaction, error)
 
     interaction.response.send_message.assert_awaited_once_with(
         "An unexpected error occurred. Please try again later.", ephemeral=True
