@@ -19,9 +19,11 @@ CI runs ruff (hard fail), ty (advisory, `continue-on-error: true`), and pytest (
 
 ```
 bot.py              Entry point. Loads cogs, runs alembic upgrade head, calls init_db(), syncs slash commands.
+                    Also starts the FastAPI server via uvicorn in a background thread, passing bot=bot to create_app().
 config.py           Settings via pydantic-settings. ALLOWED_ROLE_IDS is a str;
                     use settings.parsed_role_ids (list[int]) in code.
                     Settings() needs # type: ignore[call-arg].
+                    resolved_port property: reads Railway $PORT env var first, falls back to api_port (default 8000).
 models.py           SQLModel tables: Deadline and DeadlineMember.
                     NO `from __future__ import annotations` — breaks SQLModel runtime.
                     Datetimes use datetime.now(UTC).replace(tzinfo=None) as default_factory.
@@ -30,6 +32,16 @@ checks.py           has_allowed_role() decorator for slash commands.
 calendar_sync.py    Stub only. All methods are no-ops.
 cogs/deadlines.py   All /deadline slash commands.
 cogs/reminders.py   APScheduler reminder cog. Fires at 14, 7, 3 days before due_date.
+discord_utils.py    notify_users(bot, user_ids, message) — sends DMs via the live bot instance.
+                    send_dm(bot, user_id, message) — sends a single DM; swallows Forbidden errors.
+api/main.py         FastAPI app factory: create_app(bot=None). Stores bot in app.state.bot.
+                    CORS allows GET, POST, PATCH, DELETE.
+api/deps.py         FastAPI dependencies: get_current_user (validates Bearer token via Discord /users/@me),
+                    get_bot (retrieves bot from app.state.bot), get_settings.
+api/schemas.py      Pydantic schemas: DeadlineCreateRequest, DeadlineEditRequest, DeadlineResponse,
+                    DiscordUser, GuildMember (with display_name property).
+api/routers/deadlines.py  REST endpoints for deadlines. All write ops call notify_users().
+api/routers/guild.py      REST endpoints for guild member lookup (search + list all).
 ```
 
 ## Database Layer (`db.py`)
@@ -63,16 +75,22 @@ await access.create(title, due_date, description, user_ids)  # Deadline | None (
 await access.edit(title, new_title, due_date, description)   # Deadline | None (None = not assigned)
 await access.assign(title, add_ids, remove_ids)              # (added, removed, conflicts) | None
 await access.delete(title)                                   # Deadline | None (None = not assigned)
+
+# ID-based methods — used by the REST API (Raycast extension)
+await access.get_by_id(deadline_id)                          # Deadline | None
+await access.edit_by_id(deadline_id, new_title, due_date, description)  # Deadline | None
+await access.assign_by_id(deadline_id, add_ids, remove_ids)             # (added, removed, conflicts) | None
+await access.delete_by_id(deadline_id)                       # Deadline | None (returns snapshot before deletion)
 ```
 
-All methods that need a membership check do the join inside a **single session** to avoid the
-double-consume problem.
+The title-based methods are used exclusively by Discord slash commands. The ID-based methods
+are used exclusively by the REST API. Do not mix them.
 
 ### Module-level helpers (admin/background use only)
 
 ```python
 get_all_future_deadlines()          # Used by reminders cog — no user filter
-get_deadline_members(deadline_id)   # Used by cogs to build embeds after write operations
+get_deadline_members(deadline_id)   # Used by cogs and REST API to build responses after write operations
 ```
 
 ### Private helpers (do not call directly outside db.py)
@@ -130,6 +148,7 @@ All datetimes are **naive UTC** — no `tzinfo`. Use `datetime.now(UTC).replace(
 tests/conftest.py           Fixtures: db_session (in-memory SQLite), mock_interaction, make_deadline, make_member
 tests/test_db.py            Tests for DeadlineAccess and module-level helpers
 tests/test_deadlines.py     Tests for slash command handlers; mocks DeadlineAccess
+tests/test_api.py           Tests for FastAPI REST endpoints (auth, CRUD, notifications, guild)
 tests/test_migration.py     Integration tests for the Alembic migration
 tests/test_reminders.py     Tests for the reminders cog
 tests/test_models.py        Unit tests for model properties
@@ -156,6 +175,89 @@ with patch.object(deadlines_module, "_get_deadline_by_title", new=AsyncMock(retu
 ```
 
 `mock_interaction.user.id` defaults to `123456789` (set in `conftest.py`).
+
+### Patching pattern for API tests
+
+All write endpoints (`POST`, `PATCH`, `DELETE /deadlines`) depend on both `get_current_user`
+and `get_bot`. Use the `mock_auth_and_bot` fixture for these; use `mock_auth` for read-only
+endpoints; use `mock_auth_and_settings` for guild endpoints.
+
+```python
+@pytest.fixture()
+def mock_auth_and_bot(app):
+    from api.deps import get_bot, get_current_user
+    fake_bot = MagicMock()
+    app.dependency_overrides[get_current_user] = lambda: FAKE_USER
+    app.dependency_overrides[get_bot] = lambda: fake_bot
+    yield fake_bot
+    app.dependency_overrides.clear()
+```
+
+Always patch `api.routers.deadlines.notify_users` (not `discord_utils.notify_users`) in API
+tests — the router imports it at module level, so the patch target must be the router's
+namespace.
+
+When `get_deadline_members` is called more than once in a single request (e.g. `PATCH`
+fetches current members for the diff, then fetches again for the final response), use
+`side_effect` with a list of plain values on an `AsyncMock`:
+
+```python
+mock_get_members.side_effect = [first_call_result, second_call_result]
+```
+
+Do **not** use `AsyncMock(return_value=...)()` (pre-called coroutines) in `side_effect` —
+this produces a coroutine object that is not iterable and causes a `TypeError` at runtime.
+
+## Raycast Extension (`raycast-extension/`)
+
+A private Raycast extension (not published to the Store). Install from source:
+
+```bash
+cd raycast-extension
+npm install
+npm run build    # or: npm run dev  for hot-reload
+```
+
+In Raycast: **Settings → Extensions → + → Add Script Directory** — point at `raycast-extension/`.
+
+### Key source files
+
+```
+src/oauth.ts            Discord OAuth2 PKCE client setup (no proxy).
+src/api.ts              All HTTP calls to the FastAPI backend. Types: DeadlineResponse,
+                        DeadlineCreateRequest, DeadlineEditRequest, GuildMember.
+src/list-deadlines.tsx  Main command. Shows deadlines with detail panel. Supports Edit (⌘E)
+                        and Delete (ctrl+X) per-row actions.
+src/create-deadline.tsx Create command / pushed form. Uses Form.TagPicker for member assignment.
+src/edit-deadline.tsx   Edit form, pre-filled with existing values. Same TagPicker pattern.
+```
+
+### API functions (`src/api.ts`)
+
+```ts
+listDeadlines(days?)                          // GET /deadlines
+createDeadline(body: DeadlineCreateRequest)   // POST /deadlines → DeadlineResponse
+editDeadline(id, body: DeadlineEditRequest)   // PATCH /deadlines/{id} → DeadlineResponse
+deleteDeadline(id)                            // DELETE /deadlines/{id} → void (204)
+getMembers(ids: string[])                     // GET /guild/members/all, filtered client-side
+getAllMembers()                               // GET /guild/members/all
+searchMembers(query, limit?)                 // GET /guild/members/search
+```
+
+`apiFetch` guards `204 No Content` responses — returns `undefined` instead of calling
+`.json()` (which would throw on an empty body).
+
+### Member name resolution in the detail panel
+
+`DeadlineDetail` in `list-deadlines.tsx` resolves all user IDs (members + `created_by`) via
+a single `getMembers(allIds)` call. While loading, both the "Created By" and "Members" rows
+show `"Loading…"` rather than the raw snowflake ID. After resolution, the creator falls back
+to `"User <id>"` only if the ID is not found in the guild.
+
+### Icon
+
+Place a 512×512 PNG at `raycast-extension/assets/command-icon.png` (matches `"icon"` in
+`package.json`). The `assets/` directory is otherwise empty.
 
 ## Raycast Extension OAuth2
 
@@ -216,7 +318,7 @@ The `api_port` setting in `config.py` (default `8000`) is for local development 
 the port uvicorn binds to inside the container. Railway routes external HTTPS traffic to
 it automatically.
 
-## Known Gotchas
+## Migrations (Alembic)
 
 1. **`from __future__ import annotations` in `models.py`** — must not be present; breaks SQLModel
    relationship resolution at runtime.
@@ -237,6 +339,18 @@ it automatically.
    `api_port` (default `8000`) for local dev. `bot.py` passes `settings.resolved_port` to
    uvicorn. Never hardcode port `8000` or `8080` in the Railway service URL — Railway's HTTPS
    ingress always listens on 443 externally regardless of the container port.
+10. **`notify_users` requires the live bot** — `discord_utils.notify_users(bot, ids, msg)` calls
+    `bot.fetch_user()` which needs a connected `discord.Client`. The FastAPI layer receives the
+    bot via `app.state.bot` (set in `create_app(bot=...)` in `api/main.py`) and retrieves it
+    via the `get_bot` dependency in `api/deps.py`. If `bot` is `None` (e.g. in tests that don't
+    use `mock_auth_and_bot`), any write endpoint that calls `notify_users` will raise at runtime.
+11. **`delete_by_id` returns a snapshot, not the live row** — the deleted `Deadline` object is
+    copied into a new in-memory `Deadline` instance before deletion so the caller can read fields
+    (e.g. `title`, `due_date`) after the DB row is gone.
+12. **PATCH member diff: `side_effect` must be plain values** — `get_deadline_members` is called
+    twice in `PATCH /deadlines/{id}` (once for the diff, once for the final response). In tests,
+    set `mock_get_members.side_effect = [list1, list2]` with plain list values, not pre-awaited
+    coroutines. See patching pattern section above.
 
 ## Migrations (Alembic)
 

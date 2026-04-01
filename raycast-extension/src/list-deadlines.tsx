@@ -70,7 +70,11 @@ function DeadlineDetail({ deadline }: { deadline: DeadlineResponse }) {
   );
 
   const creatorMember = memberMap.get(deadline.created_by);
-  const creatorName = creatorMember ? memberDisplayName(creatorMember) : `User ${deadline.created_by}`;
+  const creatorName = creatorMember
+    ? memberDisplayName(creatorMember)
+    : isLoadingMembers
+      ? "Loading…"
+      : `User ${deadline.created_by}`;
 
   // Assigned members are only deadline.member_ids (not the raw allIds union).
   const assignedMembers = deadline.member_ids
