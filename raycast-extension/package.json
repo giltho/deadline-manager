@@ -3,10 +3,14 @@
   "name": "deadline-manager",
   "title": "Deadline Manager",
   "description": "View and create deadlines for your Discord server.",
-  "icon": "command-icon.png",
+  "icon": "icon.png",
   "author": "deadline-manager",
-  "platforms": ["macOS"],
-  "categories": ["Productivity"],
+  "platforms": [
+    "macOS"
+  ],
+  "categories": [
+    "Productivity"
+  ],
   "license": "MIT",
   "commands": [
     {
