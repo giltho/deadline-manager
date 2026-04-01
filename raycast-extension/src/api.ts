@@ -59,6 +59,9 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   if (!response.ok) {
     const text = await response.text().catch(() => response.statusText);
     console.error(`[api] error body: ${text}`);
+    if (response.status === 429) {
+      throw new Error("Rate limited by Discord — please wait a moment and try again.");
+    }
     throw new Error(`API error ${response.status}: ${text}`);
   }
 

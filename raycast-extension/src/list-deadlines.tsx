@@ -1,9 +1,24 @@
-import { Action, ActionPanel, Alert, Color, confirmAlert, Icon, List, showToast, Toast, useNavigation } from "@raycast/api";
+import {
+  Action,
+  ActionPanel,
+  Alert,
+  Color,
+  confirmAlert,
+  Icon,
+  List,
+  showToast,
+  Toast,
+  useNavigation,
+} from "@raycast/api";
 import { usePromise, withAccessToken } from "@raycast/utils";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { listDeadlines, getMembers, deleteDeadline, type DeadlineResponse, type GuildMember } from "./api";
 import { authorize } from "./oauth";
 import CreateDeadline from "./create-deadline";
 import EditDeadline from "./edit-deadline";
+
+/** How long (ms) the user must stay on a row before we fetch member details. */
+const MEMBER_FETCH_DEBOUNCE_MS = 300;
 
 function formatDueDate(iso: string): string {
   const date = new Date(iso);
@@ -40,7 +55,14 @@ function memberDisplayName(m: GuildMember): string {
   return m.nick ?? m.global_name ?? m.username;
 }
 
-function DeadlineDetail({ deadline }: { deadline: DeadlineResponse }) {
+interface DeadlineDetailProps {
+  deadline: DeadlineResponse;
+  /** Member data to display. null = not yet loaded (show loading). */
+  resolvedMembers: GuildMember[] | null;
+  isLoadingMembers: boolean;
+}
+
+function DeadlineDetail({ deadline, resolvedMembers, isLoadingMembers }: DeadlineDetailProps) {
   const formattedDate = formatDueDate(deadline.due_date);
   const formattedCreatedAt = new Date(deadline.created_at).toLocaleDateString("en-GB", {
     day: "numeric",
@@ -48,23 +70,6 @@ function DeadlineDetail({ deadline }: { deadline: DeadlineResponse }) {
     year: "numeric",
   });
 
-  console.log(`[DeadlineDetail] deadline.id=${deadline.id} created_by=${deadline.created_by} member_ids=${JSON.stringify(deadline.member_ids)}`);
-
-  // Resolve all involved user IDs: members + creator (deduplicated).
-  const allIds = Array.from(new Set([deadline.created_by, ...deadline.member_ids]));
-  console.log(`[DeadlineDetail] allIds to resolve: ${JSON.stringify(allIds)}`);
-
-  const { isLoading: isLoadingMembers, data: resolvedMembers, error: membersError } = usePromise(
-    (ids: string[]) => {
-      console.log(`[DeadlineDetail] usePromise firing with ids=${JSON.stringify(ids)}`);
-      return getMembers(ids);
-    },
-    [allIds],
-  );
-
-  console.log(`[DeadlineDetail] isLoadingMembers=${isLoadingMembers} resolvedMembers=${JSON.stringify(resolvedMembers)} error=${membersError}`);
-
-  // Build a lookup map from id (string) → GuildMember.
   const memberMap = new Map<string, GuildMember>(
     (resolvedMembers ?? []).map((m) => [m.id, m]),
   );
@@ -72,23 +77,20 @@ function DeadlineDetail({ deadline }: { deadline: DeadlineResponse }) {
   const creatorMember = memberMap.get(deadline.created_by);
   const creatorName = creatorMember
     ? memberDisplayName(creatorMember)
-    : isLoadingMembers
+    : isLoadingMembers || resolvedMembers === null
       ? "Loading…"
       : `User ${deadline.created_by}`;
 
-  // Assigned members are only deadline.member_ids (not the raw allIds union).
   const assignedMembers = deadline.member_ids
     .map((id) => memberMap.get(id))
     .filter((m): m is GuildMember => m !== undefined);
-
-  console.log(`[DeadlineDetail] creatorName=${creatorName} assignedMembers=${JSON.stringify(assignedMembers?.map((m) => m.username))}`);
 
   const descriptionSection = deadline.description ? `## Description\n\n${deadline.description}\n\n` : "";
   const markdown = `# ${deadline.title}\n\n${descriptionSection}**Due:** ${formattedDate}`;
 
   return (
     <List.Item.Detail
-      isLoading={isLoadingMembers}
+      isLoading={isLoadingMembers || resolvedMembers === null}
       markdown={markdown}
       metadata={
         <List.Item.Detail.Metadata>
@@ -107,7 +109,7 @@ function DeadlineDetail({ deadline }: { deadline: DeadlineResponse }) {
           ) : (
             <List.Item.Detail.Metadata.Label
               title="Members"
-              text={isLoadingMembers ? "Loading…" : "None assigned"}
+              text={isLoadingMembers || resolvedMembers === null ? "Loading…" : "None assigned"}
             />
           )}
           <List.Item.Detail.Metadata.Separator />
@@ -123,7 +125,40 @@ function ListDeadlines() {
   const { push } = useNavigation();
   const { isLoading, data: deadlines, revalidate, error: listError } = usePromise(listDeadlines);
 
-  console.log(`[ListDeadlines] isLoading=${isLoading} deadlines=${JSON.stringify(deadlines?.map((d) => ({ id: d.id, member_ids: d.member_ids })))} error=${listError}`);
+  // The deadline ID the user has settled on (after debounce).
+  const [settledId, setSettledId] = useState<number | null>(null);
+  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Fetch members only for the settled deadline.
+  const selectedDeadline = deadlines?.find((d) => d.id === settledId) ?? null;
+  const allIds = selectedDeadline
+    ? Array.from(new Set([selectedDeadline.created_by, ...selectedDeadline.member_ids]))
+    : [];
+
+  const {
+    isLoading: isLoadingMembers,
+    data: resolvedMembers,
+    error: membersError,
+  } = usePromise(
+    (ids: string[]) => getMembers(ids),
+    [allIds],
+    { execute: settledId !== null },
+  );
+
+  // Debounce selection changes: wait MEMBER_FETCH_DEBOUNCE_MS before committing.
+  const handleSelectionChange = useCallback((id: string | null) => {
+    if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    debounceTimer.current = setTimeout(() => {
+      setSettledId(id !== null ? Number(id) : null);
+    }, MEMBER_FETCH_DEBOUNCE_MS);
+  }, []);
+
+  // Clear timer on unmount.
+  useEffect(() => {
+    return () => {
+      if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    };
+  }, []);
 
   async function handleDelete(deadline: DeadlineResponse) {
     const confirmed = await confirmAlert({
@@ -150,11 +185,35 @@ function ListDeadlines() {
     }
   }
 
+  // Surface errors in the list's bottom bar via isLoading + emptyView trick:
+  // Raycast doesn't have a native "status bar" text, but List.EmptyView works
+  // when there's nothing to show. For errors alongside a list, use a Toast.
+  useEffect(() => {
+    if (listError) {
+      showToast({
+        style: Toast.Style.Failure,
+        title: "Failed to load deadlines",
+        message: listError.message,
+      });
+    }
+  }, [listError]);
+
+  useEffect(() => {
+    if (membersError) {
+      showToast({
+        style: Toast.Style.Failure,
+        title: "Failed to load member details",
+        message: membersError.message,
+      });
+    }
+  }, [membersError]);
+
   return (
     <List
       isLoading={isLoading}
       isShowingDetail
       searchBarPlaceholder="Filter deadlines..."
+      onSelectionChange={handleSelectionChange}
       actions={
         <ActionPanel>
           <Action title="Create Deadline" icon={Icon.Plus} onAction={() => push(<CreateDeadline onCreated={revalidate} />)} />
@@ -168,12 +227,19 @@ function ListDeadlines() {
         deadlines?.map((deadline) => (
           <List.Item
             key={deadline.id}
+            id={String(deadline.id)}
             title={deadline.title}
             accessories={[
               { icon: Icon.Person, text: String(deadline.member_ids.length), tooltip: "Members assigned" },
               dueDateAccessory(deadline.due_date),
             ]}
-            detail={<DeadlineDetail deadline={deadline} />}
+            detail={
+              <DeadlineDetail
+                deadline={deadline}
+                resolvedMembers={deadline.id === settledId ? (resolvedMembers ?? null) : null}
+                isLoadingMembers={deadline.id === settledId && isLoadingMembers}
+              />
+            }
             actions={
               <ActionPanel>
                 <ActionPanel.Section>
