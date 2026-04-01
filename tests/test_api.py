@@ -2,10 +2,12 @@
 Tests for the FastAPI REST API.
 
 Covers:
-- GET  /health
-- GET  /deadlines
-- POST /deadlines
-- GET  /guild/members/search
+- GET    /health
+- GET    /deadlines
+- POST   /deadlines
+- PATCH  /deadlines/{id}
+- DELETE /deadlines/{id}
+- GET    /guild/members/search
 - Authentication (missing token, invalid token, Discord unreachable)
 """
 
@@ -98,6 +100,29 @@ def mock_auth_and_settings(app):
     app.dependency_overrides[get_current_user] = lambda: FAKE_USER
     app.dependency_overrides[get_settings] = lambda: FAKE_SETTINGS
     yield
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture()
+def mock_bot(app):
+    """Override get_bot to return a MagicMock Discord client."""
+    from api.deps import get_bot
+
+    fake_bot = MagicMock()
+    app.dependency_overrides[get_bot] = lambda: fake_bot
+    yield fake_bot
+    app.dependency_overrides.pop(get_bot, None)
+
+
+@pytest.fixture()
+def mock_auth_and_bot(app):
+    """Override get_current_user and get_bot together (most write-endpoint tests)."""
+    from api.deps import get_bot, get_current_user
+
+    fake_bot = MagicMock()
+    app.dependency_overrides[get_current_user] = lambda: FAKE_USER
+    app.dependency_overrides[get_bot] = lambda: fake_bot
+    yield fake_bot
     app.dependency_overrides.clear()
 
 
@@ -304,7 +329,7 @@ class TestCreateDeadline:
             **overrides,
         }
 
-    def test_creates_deadline_returns_201(self, client, mock_auth):
+    def test_creates_deadline_returns_201(self, client, mock_auth_and_bot):
         dl = _make_deadline(id=5, title="My Deadline")
         members = [DeadlineMember(deadline_id=5, user_id=123456789)]
 
@@ -315,6 +340,7 @@ class TestCreateDeadline:
                 new_callable=AsyncMock,
                 return_value=members,
             ),
+            patch("api.routers.deadlines.notify_users", new_callable=AsyncMock),
         ):
             mock_access = AsyncMock()
             mock_access.create = AsyncMock(return_value=dl)
@@ -327,7 +353,67 @@ class TestCreateDeadline:
         assert data["title"] == "My Deadline"
         assert "123456789" in data["member_ids"]
 
-    def test_creator_always_included_in_member_ids(self, client, mock_auth):
+    def test_notifies_other_members_on_create(self, client, mock_auth_and_bot):
+        """Members other than the creator should receive a DM notification."""
+        dl = _make_deadline(id=5, title="My Deadline")
+        members = [
+            DeadlineMember(deadline_id=5, user_id=123456789),
+            DeadlineMember(deadline_id=5, user_id=999),
+        ]
+
+        with (
+            patch("api.routers.deadlines.DeadlineAccess") as mock_cls,
+            patch(
+                "api.routers.deadlines.get_deadline_members",
+                new_callable=AsyncMock,
+                return_value=members,
+            ),
+            patch(
+                "api.routers.deadlines.notify_users", new_callable=AsyncMock
+            ) as mock_notify,
+        ):
+            mock_access = AsyncMock()
+            mock_access.create = AsyncMock(return_value=dl)
+            mock_cls.return_value = mock_access
+
+            resp = client.post(
+                "/deadlines",
+                json=self._body(member_ids=["999"]),
+                headers=AUTH_HEADERS,
+            )
+
+        assert resp.status_code == 201
+        mock_notify.assert_awaited_once()
+        notified_ids = mock_notify.call_args[0][1]
+        assert 999 in notified_ids
+        assert 123456789 not in notified_ids  # creator not notified about own action
+
+    def test_no_notification_when_solo(self, client, mock_auth_and_bot):
+        """No DM sent when the creator is the only member."""
+        dl = _make_deadline(id=5, title="My Deadline")
+        members = [DeadlineMember(deadline_id=5, user_id=123456789)]
+
+        with (
+            patch("api.routers.deadlines.DeadlineAccess") as mock_cls,
+            patch(
+                "api.routers.deadlines.get_deadline_members",
+                new_callable=AsyncMock,
+                return_value=members,
+            ),
+            patch(
+                "api.routers.deadlines.notify_users", new_callable=AsyncMock
+            ) as mock_notify,
+        ):
+            mock_access = AsyncMock()
+            mock_access.create = AsyncMock(return_value=dl)
+            mock_cls.return_value = mock_access
+
+            resp = client.post("/deadlines", json=self._body(), headers=AUTH_HEADERS)
+
+        assert resp.status_code == 201
+        mock_notify.assert_not_awaited()
+
+    def test_creator_always_included_in_member_ids(self, client, mock_auth_and_bot):
         """Creator (FAKE_USER.id=123456789) must be in user_ids even if not in body."""
         dl = _make_deadline(id=1)
         members = [DeadlineMember(deadline_id=1, user_id=123456789)]
@@ -339,6 +425,7 @@ class TestCreateDeadline:
                 new_callable=AsyncMock,
                 return_value=members,
             ),
+            patch("api.routers.deadlines.notify_users", new_callable=AsyncMock),
         ):
             mock_access = AsyncMock()
             mock_access.create = AsyncMock(return_value=dl)
@@ -351,7 +438,7 @@ class TestCreateDeadline:
         call_kwargs = mock_access.create.call_args[1]
         assert int(FAKE_USER.id) in call_kwargs["user_ids"]
 
-    def test_extra_member_ids_included(self, client, mock_auth):
+    def test_extra_member_ids_included(self, client, mock_auth_and_bot):
         """Extra member IDs from the body are passed through alongside the creator."""
         dl = _make_deadline(id=1)
         members = [
@@ -366,6 +453,7 @@ class TestCreateDeadline:
                 new_callable=AsyncMock,
                 return_value=members,
             ),
+            patch("api.routers.deadlines.notify_users", new_callable=AsyncMock),
         ):
             mock_access = AsyncMock()
             mock_access.create = AsyncMock(return_value=dl)
@@ -381,7 +469,7 @@ class TestCreateDeadline:
         assert 999 in call_kwargs["user_ids"]
         assert int(FAKE_USER.id) in call_kwargs["user_ids"]
 
-    def test_conflict_returns_409(self, client, mock_auth):
+    def test_conflict_returns_409(self, client, mock_auth_and_bot):
         """DeadlineAccess.create returning None → 409 Conflict."""
         with patch("api.routers.deadlines.DeadlineAccess") as mock_cls:
             mock_access = AsyncMock()
@@ -392,7 +480,7 @@ class TestCreateDeadline:
 
         assert resp.status_code == 409
 
-    def test_invalid_due_date_returns_422(self, client, mock_auth):
+    def test_invalid_due_date_returns_422(self, client, mock_auth_and_bot):
         resp = client.post(
             "/deadlines",
             json=self._body(due_date="not-a-date"),
@@ -400,7 +488,7 @@ class TestCreateDeadline:
         )
         assert resp.status_code == 422
 
-    def test_missing_title_returns_422(self, client, mock_auth):
+    def test_missing_title_returns_422(self, client, mock_auth_and_bot):
         resp = client.post(
             "/deadlines",
             json={"due_date": "2030-01-15"},
@@ -408,7 +496,7 @@ class TestCreateDeadline:
         )
         assert resp.status_code == 422
 
-    def test_empty_title_returns_422(self, client, mock_auth):
+    def test_empty_title_returns_422(self, client, mock_auth_and_bot):
         resp = client.post(
             "/deadlines",
             json=self._body(title=""),
@@ -416,7 +504,7 @@ class TestCreateDeadline:
         )
         assert resp.status_code == 422
 
-    def test_description_optional(self, client, mock_auth):
+    def test_description_optional(self, client, mock_auth_and_bot):
         dl = _make_deadline(id=1, description=None)
         members = [DeadlineMember(deadline_id=1, user_id=123456789)]
 
@@ -427,6 +515,7 @@ class TestCreateDeadline:
                 new_callable=AsyncMock,
                 return_value=members,
             ),
+            patch("api.routers.deadlines.notify_users", new_callable=AsyncMock),
         ):
             mock_access = AsyncMock()
             mock_access.create = AsyncMock(return_value=dl)
@@ -448,7 +537,7 @@ class TestCreateDeadline:
             "15 Jun 2030 aoe",
         ],
     )
-    def test_due_date_formats_accepted(self, client, mock_auth, due_date_str):
+    def test_due_date_formats_accepted(self, client, mock_auth_and_bot, due_date_str):
         dl = _make_deadline(id=1)
         members = [DeadlineMember(deadline_id=1, user_id=123456789)]
 
@@ -459,6 +548,7 @@ class TestCreateDeadline:
                 new_callable=AsyncMock,
                 return_value=members,
             ),
+            patch("api.routers.deadlines.notify_users", new_callable=AsyncMock),
         ):
             mock_access = AsyncMock()
             mock_access.create = AsyncMock(return_value=dl)
@@ -472,7 +562,7 @@ class TestCreateDeadline:
 
         assert resp.status_code == 201, f"Failed for: {due_date_str!r}"
 
-    def test_creator_not_duplicated_in_member_ids(self, client, mock_auth):
+    def test_creator_not_duplicated_in_member_ids(self, client, mock_auth_and_bot):
         """If creator ID is already in body.member_ids, it should only appear once."""
         dl = _make_deadline(id=1)
         members = [DeadlineMember(deadline_id=1, user_id=123456789)]
@@ -484,6 +574,7 @@ class TestCreateDeadline:
                 new_callable=AsyncMock,
                 return_value=members,
             ),
+            patch("api.routers.deadlines.notify_users", new_callable=AsyncMock),
         ):
             mock_access = AsyncMock()
             mock_access.create = AsyncMock(return_value=dl)
@@ -497,6 +588,381 @@ class TestCreateDeadline:
 
         call_kwargs = mock_access.create.call_args[1]
         assert call_kwargs["user_ids"].count(int(FAKE_USER.id)) == 1
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PATCH /deadlines/{id}
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+class TestEditDeadline:
+    def _body(self, **overrides):
+        return {"new_title": "Updated Title", **overrides}
+
+    def test_edit_returns_200(self, client, mock_auth_and_bot):
+        dl = _make_deadline(id=7, title="Updated Title")
+        members = [DeadlineMember(deadline_id=7, user_id=123456789)]
+
+        with (
+            patch("api.routers.deadlines.DeadlineAccess") as mock_cls,
+            patch(
+                "api.routers.deadlines.get_deadline_members",
+                new_callable=AsyncMock,
+                return_value=members,
+            ),
+            patch("api.routers.deadlines.notify_users", new_callable=AsyncMock),
+        ):
+            mock_access = AsyncMock()
+            mock_access.edit_by_id = AsyncMock(return_value=dl)
+            mock_access.assign_by_id = AsyncMock(return_value=([], [], []))
+            mock_cls.return_value = mock_access
+
+            resp = client.patch("/deadlines/7", json=self._body(), headers=AUTH_HEADERS)
+
+        assert resp.status_code == 200
+        assert resp.json()["title"] == "Updated Title"
+
+    def test_no_fields_returns_422(self, client, mock_auth_and_bot):
+        resp = client.patch("/deadlines/7", json={}, headers=AUTH_HEADERS)
+        assert resp.status_code == 422
+
+    def test_invalid_due_date_returns_422(self, client, mock_auth_and_bot):
+        dl = _make_deadline(id=7)
+        with patch("api.routers.deadlines.DeadlineAccess") as mock_cls:
+            mock_access = AsyncMock()
+            mock_access.edit_by_id = AsyncMock(return_value=dl)
+            mock_cls.return_value = mock_access
+
+            resp = client.patch(
+                "/deadlines/7",
+                json={"due_date": "not-a-date"},
+                headers=AUTH_HEADERS,
+            )
+
+        assert resp.status_code == 422
+
+    def test_not_found_returns_404(self, client, mock_auth_and_bot):
+        with patch("api.routers.deadlines.DeadlineAccess") as mock_cls:
+            mock_access = AsyncMock()
+            mock_access.edit_by_id = AsyncMock(return_value=None)
+            mock_cls.return_value = mock_access
+
+            resp = client.patch(
+                "/deadlines/99", json=self._body(), headers=AUTH_HEADERS
+            )
+
+        assert resp.status_code == 404
+
+    def test_requires_auth(self, client):
+        resp = client.patch("/deadlines/7", json=self._body())
+        assert resp.status_code == 401
+
+    def test_notifies_existing_members_on_edit(self, client, mock_auth_and_bot):
+        """Existing members (not the editor) must receive an update DM."""
+        dl = _make_deadline(id=7, title="Updated Title")
+        members = [
+            DeadlineMember(deadline_id=7, user_id=123456789),
+            DeadlineMember(deadline_id=7, user_id=888),
+        ]
+
+        with (
+            patch("api.routers.deadlines.DeadlineAccess") as mock_cls,
+            patch(
+                "api.routers.deadlines.get_deadline_members",
+                new_callable=AsyncMock,
+                return_value=members,
+            ),
+            patch(
+                "api.routers.deadlines.notify_users", new_callable=AsyncMock
+            ) as mock_notify,
+        ):
+            mock_access = AsyncMock()
+            mock_access.edit_by_id = AsyncMock(return_value=dl)
+            mock_access.assign_by_id = AsyncMock(return_value=([], [], []))
+            mock_cls.return_value = mock_access
+
+            resp = client.patch("/deadlines/7", json=self._body(), headers=AUTH_HEADERS)
+
+        assert resp.status_code == 200
+        # At least one notify_users call should include 888
+        all_notified = [
+            uid for call in mock_notify.await_args_list for uid in call[0][1]
+        ]
+        assert 888 in all_notified
+        assert 123456789 not in all_notified  # editor not notified about own action
+
+    def test_notifies_added_members(self, client, mock_auth_and_bot):
+        """Newly added members must receive an 'added to deadline' DM."""
+        dl = _make_deadline(id=7, title="My DL")
+        # After assignment: editor + new member
+        members_after = [
+            DeadlineMember(deadline_id=7, user_id=123456789),
+            DeadlineMember(deadline_id=7, user_id=777),
+        ]
+
+        with (
+            patch("api.routers.deadlines.DeadlineAccess") as mock_cls,
+            patch(
+                "api.routers.deadlines.get_deadline_members",
+                new_callable=AsyncMock,
+            ) as mock_get_members,
+            patch(
+                "api.routers.deadlines.notify_users", new_callable=AsyncMock
+            ) as mock_notify,
+        ):
+            # First call (for member diff): only editor currently assigned
+            # Second call (final member list): both assigned
+            mock_get_members.side_effect = [
+                [DeadlineMember(deadline_id=7, user_id=123456789)],
+                members_after,
+            ]
+            mock_access = AsyncMock()
+            mock_access.edit_by_id = AsyncMock(return_value=dl)
+            mock_access.assign_by_id = AsyncMock(return_value=([777], [], []))
+            mock_cls.return_value = mock_access
+
+            resp = client.patch(
+                "/deadlines/7",
+                json={"member_ids": ["777"]},
+                headers=AUTH_HEADERS,
+            )
+
+        assert resp.status_code == 200
+        all_notified = [
+            uid for call in mock_notify.await_args_list for uid in call[0][1]
+        ]
+        assert 777 in all_notified
+
+    def test_notifies_removed_members(self, client, mock_auth_and_bot):
+        """Removed members must receive a 'removed from deadline' DM."""
+        dl = _make_deadline(id=7, title="My DL")
+        members_after = [DeadlineMember(deadline_id=7, user_id=123456789)]
+
+        with (
+            patch("api.routers.deadlines.DeadlineAccess") as mock_cls,
+            patch(
+                "api.routers.deadlines.get_deadline_members",
+                new_callable=AsyncMock,
+            ) as mock_get_members,
+            patch(
+                "api.routers.deadlines.notify_users", new_callable=AsyncMock
+            ) as mock_notify,
+        ):
+            mock_get_members.side_effect = [
+                [
+                    DeadlineMember(deadline_id=7, user_id=123456789),
+                    DeadlineMember(deadline_id=7, user_id=555),
+                ],
+                members_after,
+            ]
+            mock_access = AsyncMock()
+            mock_access.edit_by_id = AsyncMock(return_value=dl)
+            mock_access.assign_by_id = AsyncMock(return_value=([], [555], []))
+            mock_cls.return_value = mock_access
+
+            resp = client.patch(
+                "/deadlines/7",
+                json={"member_ids": [str(int(FAKE_USER.id))]},
+                headers=AUTH_HEADERS,
+            )
+
+        assert resp.status_code == 200
+        all_notified = [
+            uid for call in mock_notify.await_args_list for uid in call[0][1]
+        ]
+        assert 555 in all_notified
+
+    def test_edit_by_id_called_with_correct_args(self, client, mock_auth_and_bot):
+        dl = _make_deadline(id=7, title="New Title")
+        members = [DeadlineMember(deadline_id=7, user_id=123456789)]
+
+        with (
+            patch("api.routers.deadlines.DeadlineAccess") as mock_cls,
+            patch(
+                "api.routers.deadlines.get_deadline_members",
+                new_callable=AsyncMock,
+                return_value=members,
+            ),
+            patch("api.routers.deadlines.notify_users", new_callable=AsyncMock),
+        ):
+            mock_access = AsyncMock()
+            mock_access.edit_by_id = AsyncMock(return_value=dl)
+            mock_cls.return_value = mock_access
+
+            client.patch(
+                "/deadlines/7",
+                json={"new_title": "New Title", "due_date": "2030-06-15"},
+                headers=AUTH_HEADERS,
+            )
+
+        call_kwargs = mock_access.edit_by_id.call_args
+        assert call_kwargs[0][0] == 7
+        assert call_kwargs[1]["new_title"] == "New Title"
+        assert call_kwargs[1]["due_date"] is not None
+
+    def test_editor_always_kept_in_member_list(self, client, mock_auth_and_bot):
+        """Even if editor is omitted from member_ids body, they are never removed."""
+        dl = _make_deadline(id=7)
+        # Current members: editor + someone else
+        current_members = [
+            DeadlineMember(deadline_id=7, user_id=123456789),
+            DeadlineMember(deadline_id=7, user_id=456),
+        ]
+        # After: only editor (456 removed); editor must NOT be in remove_ids
+        members_after = [DeadlineMember(deadline_id=7, user_id=123456789)]
+
+        with (
+            patch("api.routers.deadlines.DeadlineAccess") as mock_cls,
+            patch(
+                "api.routers.deadlines.get_deadline_members",
+                new_callable=AsyncMock,
+            ) as mock_get_members,
+            patch("api.routers.deadlines.notify_users", new_callable=AsyncMock),
+        ):
+            mock_get_members.side_effect = [current_members, members_after]
+            mock_access = AsyncMock()
+            mock_access.edit_by_id = AsyncMock(return_value=dl)
+            mock_access.assign_by_id = AsyncMock(return_value=([], [456], []))
+            mock_cls.return_value = mock_access
+
+            client.patch(
+                "/deadlines/7",
+                # Body omits editor ID — only lists no members
+                json={"member_ids": []},
+                headers=AUTH_HEADERS,
+            )
+
+        assign_args = mock_access.assign_by_id.call_args
+        assert assign_args is not None, "assign_by_id should have been called"
+        _, add_ids, remove_ids = assign_args[0]
+        assert int(FAKE_USER.id) not in remove_ids
+        assert 456 in remove_ids
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# DELETE /deadlines/{id}
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+class TestDeleteDeadline:
+    def test_delete_returns_204(self, client, mock_auth_and_bot):
+        dl = _make_deadline(id=3)
+        members = [DeadlineMember(deadline_id=3, user_id=123456789)]
+
+        with (
+            patch("api.routers.deadlines.DeadlineAccess") as mock_cls,
+            patch(
+                "api.routers.deadlines.get_deadline_members",
+                new_callable=AsyncMock,
+                return_value=members,
+            ),
+            patch("api.routers.deadlines.notify_users", new_callable=AsyncMock),
+        ):
+            mock_access = AsyncMock()
+            mock_access.delete_by_id = AsyncMock(return_value=dl)
+            mock_cls.return_value = mock_access
+
+            resp = client.delete("/deadlines/3", headers=AUTH_HEADERS)
+
+        assert resp.status_code == 204
+        assert resp.content == b""
+
+    def test_not_found_returns_404(self, client, mock_auth_and_bot):
+        with (
+            patch("api.routers.deadlines.DeadlineAccess") as mock_cls,
+            patch(
+                "api.routers.deadlines.get_deadline_members",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+        ):
+            mock_access = AsyncMock()
+            mock_access.delete_by_id = AsyncMock(return_value=None)
+            mock_cls.return_value = mock_access
+
+            resp = client.delete("/deadlines/99", headers=AUTH_HEADERS)
+
+        assert resp.status_code == 404
+
+    def test_requires_auth(self, client):
+        resp = client.delete("/deadlines/3")
+        assert resp.status_code == 401
+
+    def test_notifies_all_members_on_delete(self, client, mock_auth_and_bot):
+        """All assigned members (including deleter) must receive a DM."""
+        dl = _make_deadline(id=3, title="Doomed DL")
+        members = [
+            DeadlineMember(deadline_id=3, user_id=123456789),
+            DeadlineMember(deadline_id=3, user_id=444),
+        ]
+
+        with (
+            patch("api.routers.deadlines.DeadlineAccess") as mock_cls,
+            patch(
+                "api.routers.deadlines.get_deadline_members",
+                new_callable=AsyncMock,
+                return_value=members,
+            ),
+            patch(
+                "api.routers.deadlines.notify_users", new_callable=AsyncMock
+            ) as mock_notify,
+        ):
+            mock_access = AsyncMock()
+            mock_access.delete_by_id = AsyncMock(return_value=dl)
+            mock_cls.return_value = mock_access
+
+            resp = client.delete("/deadlines/3", headers=AUTH_HEADERS)
+
+        assert resp.status_code == 204
+        mock_notify.assert_awaited_once()
+        notified_ids = mock_notify.call_args[0][1]
+        assert 444 in notified_ids
+        assert 123456789 in notified_ids
+
+    def test_no_notification_when_no_members(self, client, mock_auth_and_bot):
+        """If there were no members somehow, notify_users is not called."""
+        dl = _make_deadline(id=3)
+
+        with (
+            patch("api.routers.deadlines.DeadlineAccess") as mock_cls,
+            patch(
+                "api.routers.deadlines.get_deadline_members",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "api.routers.deadlines.notify_users", new_callable=AsyncMock
+            ) as mock_notify,
+        ):
+            mock_access = AsyncMock()
+            mock_access.delete_by_id = AsyncMock(return_value=dl)
+            mock_cls.return_value = mock_access
+
+            resp = client.delete("/deadlines/3", headers=AUTH_HEADERS)
+
+        assert resp.status_code == 204
+        mock_notify.assert_not_awaited()
+
+    def test_delete_by_id_called_with_correct_id(self, client, mock_auth_and_bot):
+        dl = _make_deadline(id=42)
+        members = [DeadlineMember(deadline_id=42, user_id=123456789)]
+
+        with (
+            patch("api.routers.deadlines.DeadlineAccess") as mock_cls,
+            patch(
+                "api.routers.deadlines.get_deadline_members",
+                new_callable=AsyncMock,
+                return_value=members,
+            ),
+            patch("api.routers.deadlines.notify_users", new_callable=AsyncMock),
+        ):
+            mock_access = AsyncMock()
+            mock_access.delete_by_id = AsyncMock(return_value=dl)
+            mock_cls.return_value = mock_access
+
+            client.delete("/deadlines/42", headers=AUTH_HEADERS)
+
+        mock_access.delete_by_id.assert_awaited_once_with(42)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

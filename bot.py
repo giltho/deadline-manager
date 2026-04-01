@@ -103,7 +103,8 @@ async def main() -> None:
     bot = DeadlineBot()
 
     # Build the FastAPI app and configure uvicorn to use the running event loop.
-    app = create_app()
+    # Pass the bot instance so API routers can send DM notifications.
+    app = create_app(bot=bot)
     uvicorn_config = uvicorn.Config(
         app,
         host="0.0.0.0",

@@ -317,3 +317,151 @@ class DeadlineAccess:
             await session.commit()
 
         return deleted_snapshot
+
+    # ── ID-based methods (used by the REST API) ───────────────────────────────
+
+    async def get_by_id(self, deadline_id: int) -> Deadline | None:
+        """Return deadline by ID only if this user is assigned. None otherwise."""
+        async with get_session() as session:
+            result = await session.exec(
+                select(Deadline)
+                .where(Deadline.id == deadline_id)
+                .join(DeadlineMember)
+                .where(DeadlineMember.user_id == self._user_id)
+            )
+            return result.first()
+
+    async def edit_by_id(
+        self,
+        deadline_id: int,
+        new_title: str | None = None,
+        due_date: datetime | None = None,
+        description: str | None = None,
+    ) -> Deadline | None:
+        """
+        Edit deadline fields by ID. Returns the updated Deadline, or None if not
+        assigned to this user.
+        """
+        async with get_session() as session:
+            check = await session.exec(
+                select(Deadline)
+                .where(Deadline.id == deadline_id)
+                .join(DeadlineMember)
+                .where(DeadlineMember.user_id == self._user_id)
+            )
+            db_deadline = check.first()
+            if db_deadline is None:
+                return None
+
+            if new_title is not None:
+                db_deadline.title = new_title
+            if due_date is not None:
+                db_deadline.due_date = due_date
+            if description is not None:
+                db_deadline.description = description
+
+            session.add(db_deadline)
+            await session.commit()
+            await session.refresh(db_deadline)
+            return db_deadline
+
+    async def assign_by_id(
+        self,
+        deadline_id: int,
+        add_ids: list[int],
+        remove_ids: list[int],
+    ) -> tuple[list[int], list[int], list[int]] | None:
+        """
+        Add/remove members from a deadline by ID.
+        Returns (added, removed, conflicts) or None if user is not assigned.
+        conflicts contains IDs from add_ids whose per-user title uniqueness would
+        be violated.
+        """
+        async with get_session() as session:
+            check = await session.exec(
+                select(Deadline)
+                .where(Deadline.id == deadline_id)
+                .join(DeadlineMember)
+                .where(DeadlineMember.user_id == self._user_id)
+            )
+            deadline = check.first()
+            if deadline is None:
+                return None
+
+            added: list[int] = []
+            removed: list[int] = []
+            conflicts: list[int] = []
+
+            for uid in add_ids:
+                exists = await session.exec(
+                    select(DeadlineMember).where(
+                        DeadlineMember.deadline_id == deadline.id,
+                        DeadlineMember.user_id == uid,
+                    )
+                )
+                if exists.first():
+                    continue
+
+                # Per-user uniqueness: does this user already have a *different*
+                # deadline with the same title?
+                other = await session.exec(
+                    select(Deadline)
+                    .join(DeadlineMember)
+                    .where(DeadlineMember.user_id == uid)
+                    .where(Deadline.title == deadline.title)
+                    .where(Deadline.id != deadline.id)
+                )
+                if other.first():
+                    conflicts.append(uid)
+                    continue
+
+                session.add(
+                    DeadlineMember(deadline_id=deadline.id, user_id=uid)  # type: ignore[arg-type]
+                )
+                added.append(uid)
+
+            for uid in remove_ids:
+                existing = await session.exec(
+                    select(DeadlineMember).where(
+                        DeadlineMember.deadline_id == deadline.id,
+                        DeadlineMember.user_id == uid,
+                    )
+                )
+                row = existing.first()
+                if row:
+                    await session.delete(row)
+                    removed.append(uid)
+
+            await session.commit()
+
+        return added, removed, conflicts
+
+    async def delete_by_id(self, deadline_id: int) -> Deadline | None:
+        """
+        Delete deadline by ID. Returns the deleted Deadline snapshot, or None if
+        not assigned to this user.
+        """
+        async with get_session() as session:
+            check = await session.exec(
+                select(Deadline)
+                .where(Deadline.id == deadline_id)
+                .join(DeadlineMember)
+                .where(DeadlineMember.user_id == self._user_id)
+            )
+            deadline = check.first()
+            if deadline is None:
+                return None
+
+            deleted_snapshot = Deadline(
+                id=deadline.id,
+                title=deadline.title,
+                description=deadline.description,
+                due_date=deadline.due_date,
+                created_by=deadline.created_by,
+                created_at=deadline.created_at,
+                outlook_event_id=deadline.outlook_event_id,
+            )
+            await session.delete(deadline)
+            await session.commit()
+
+        return deleted_snapshot

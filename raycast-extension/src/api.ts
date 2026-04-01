@@ -31,6 +31,14 @@ export interface GuildMember {
   avatar: string | null;
 }
 
+export interface DeadlineEditRequest {
+  new_title?: string;
+  due_date?: string; // flexible date string, same formats as create
+  description?: string | null;
+  // When provided, replaces the full member list. When omitted, members unchanged.
+  member_ids?: string[];
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
@@ -54,6 +62,9 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(`API error ${response.status}: ${text}`);
   }
 
+  // 204 No Content — return undefined cast to T (callers that use void are fine).
+  if (response.status === 204) return undefined as unknown as T;
+
   const data = await response.json();
   console.log(`[api] response body:`, JSON.stringify(data).slice(0, 500));
   return data as T;
@@ -71,6 +82,17 @@ export async function createDeadline(body: DeadlineCreateRequest): Promise<Deadl
     method: "POST",
     body: JSON.stringify(body),
   });
+}
+
+export async function editDeadline(id: number, body: DeadlineEditRequest): Promise<DeadlineResponse> {
+  return apiFetch<DeadlineResponse>(`/deadlines/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function deleteDeadline(id: number): Promise<void> {
+  await apiFetch<void>(`/deadlines/${id}`, { method: "DELETE" });
 }
 
 export async function getAllMembers(): Promise<GuildMember[]> {

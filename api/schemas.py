@@ -56,6 +56,28 @@ class DeadlineCreateRequest(BaseModel):
     member_ids: list[str] = Field(default_factory=list)
 
 
+class DeadlineEditRequest(BaseModel):
+    """Payload for PATCH /deadlines/{id}.
+
+    All fields are optional. Omitting a field (or passing null) means
+    "leave unchanged". member_ids, when provided, replaces the full member
+    list — the router computes add/remove diffs internally.
+    """
+
+    new_title: str | None = Field(default=None, min_length=1, max_length=200)
+    due_date: str | None = Field(
+        default=None,
+        description=(
+            "Flexible date string, same formats as /deadline add. "
+            "Examples: '2026-06-15', '15 Jun 2026 17:00', '2026-06-15 AoE'"
+        ),
+    )
+    description: str | None = Field(default=None, max_length=1000)
+    # When provided, replaces the full member list (strings to avoid JS precision loss).
+    # When omitted/null, members are left unchanged.
+    member_ids: list[str] | None = Field(default=None)
+
+
 # ── Guild ─────────────────────────────────────────────────────────────────────
 
 

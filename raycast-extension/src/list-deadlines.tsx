@@ -1,8 +1,9 @@
-import { Action, ActionPanel, Color, Icon, List, useNavigation } from "@raycast/api";
+import { Action, ActionPanel, Alert, Color, confirmAlert, Icon, List, showToast, Toast, useNavigation } from "@raycast/api";
 import { usePromise, withAccessToken } from "@raycast/utils";
-import { listDeadlines, getMembers, type DeadlineResponse, type GuildMember } from "./api";
+import { listDeadlines, getMembers, deleteDeadline, type DeadlineResponse, type GuildMember } from "./api";
 import { authorize } from "./oauth";
 import CreateDeadline from "./create-deadline";
+import EditDeadline from "./edit-deadline";
 
 function formatDueDate(iso: string): string {
   const date = new Date(iso);
@@ -120,6 +121,31 @@ function ListDeadlines() {
 
   console.log(`[ListDeadlines] isLoading=${isLoading} deadlines=${JSON.stringify(deadlines?.map((d) => ({ id: d.id, member_ids: d.member_ids })))} error=${listError}`);
 
+  async function handleDelete(deadline: DeadlineResponse) {
+    const confirmed = await confirmAlert({
+      title: `Delete "${deadline.title}"?`,
+      message: "This cannot be undone. All assigned members will be notified.",
+      primaryAction: {
+        title: "Delete",
+        style: Alert.ActionStyle.Destructive,
+      },
+    });
+    if (!confirmed) return;
+
+    const toast = await showToast({ style: Toast.Style.Animated, title: "Deleting deadline..." });
+    try {
+      await deleteDeadline(deadline.id);
+      toast.style = Toast.Style.Success;
+      toast.title = "Deadline deleted";
+      revalidate();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      toast.style = Toast.Style.Failure;
+      toast.title = "Failed to delete deadline";
+      toast.message = message;
+    }
+  }
+
   return (
     <List
       isLoading={isLoading}
@@ -146,17 +172,36 @@ function ListDeadlines() {
             detail={<DeadlineDetail deadline={deadline} />}
             actions={
               <ActionPanel>
-                <Action
-                  title="Create Deadline"
-                  icon={Icon.Plus}
-                  onAction={() => push(<CreateDeadline onCreated={revalidate} />)}
-                />
-                <Action
-                  title="Refresh"
-                  icon={Icon.ArrowClockwise}
-                  onAction={revalidate}
-                  shortcut={{ modifiers: ["cmd"], key: "r" }}
-                />
+                <ActionPanel.Section>
+                  <Action
+                    title="Create Deadline"
+                    icon={Icon.Plus}
+                    onAction={() => push(<CreateDeadline onCreated={revalidate} />)}
+                  />
+                  <Action
+                    title="Edit Deadline"
+                    icon={Icon.Pencil}
+                    shortcut={{ modifiers: ["cmd"], key: "e" }}
+                    onAction={() => push(<EditDeadline deadline={deadline} onEdited={revalidate} />)}
+                  />
+                </ActionPanel.Section>
+                <ActionPanel.Section>
+                  <Action
+                    title="Delete Deadline"
+                    icon={Icon.Trash}
+                    style={Action.Style.Destructive}
+                    shortcut={{ modifiers: ["ctrl"], key: "x" }}
+                    onAction={() => handleDelete(deadline)}
+                  />
+                </ActionPanel.Section>
+                <ActionPanel.Section>
+                  <Action
+                    title="Refresh"
+                    icon={Icon.ArrowClockwise}
+                    onAction={revalidate}
+                    shortcut={{ modifiers: ["cmd"], key: "r" }}
+                  />
+                </ActionPanel.Section>
               </ActionPanel>
             }
           />
