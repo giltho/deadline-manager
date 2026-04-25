@@ -1,0 +1,21 @@
+services:
+  deadline-manager:
+    build: deadline_manager/src
+    restart: unless-stopped
+    env_file: deadline_manager/src/.env
+    environment:
+      DATA_DIR: /data
+    volumes:
+      - ./deadline_manager:/data
+    networks:
+      - traefik
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.deadline-manager.rule=Host(`${DEADLINE_HOSTNAME}`)"
+      - "traefik.http.routers.deadline-manager.entrypoints=websecure"
+      - "traefik.http.routers.deadline-manager.tls.certresolver=letsencrypt"
+      - "traefik.http.services.deadline-manager.loadbalancer.server.port=8000"
+
+networks:
+  traefik:
+    external: true

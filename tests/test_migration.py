@@ -64,15 +64,15 @@ def _run_upgrade(db_dir: Path) -> None:
 
     cfg = AlembicConfig("alembic.ini")
     # Override the URL so it points at our test DB directory
-    orig = os.environ.get("RAILWAY_VOLUME_MOUNT_PATH")
-    os.environ["RAILWAY_VOLUME_MOUNT_PATH"] = str(db_dir)
+    orig = os.environ.get("DATA_DIR")
+    os.environ["DATA_DIR"] = str(db_dir)
     try:
         alembic_command.upgrade(cfg, "head")
     finally:
         if orig is None:
-            os.environ.pop("RAILWAY_VOLUME_MOUNT_PATH", None)
+            os.environ.pop("DATA_DIR", None)
         else:
-            os.environ["RAILWAY_VOLUME_MOUNT_PATH"] = orig
+            os.environ["DATA_DIR"] = orig
 
 
 def test_migration_drops_title_unique(pre_migration_db: Path) -> None:

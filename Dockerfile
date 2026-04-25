@@ -26,6 +26,5 @@ COPY . .
 # Ensure the venv's bin directory is on PATH
 ENV PATH="/app/.venv/bin:$PATH"
 
-# Railway injects $PORT; fall back to 8000 for local dev.
-EXPOSE ${PORT:-8000}
+EXPOSE 8000
 CMD ["python", "bot.py"]

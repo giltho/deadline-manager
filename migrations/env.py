@@ -1,8 +1,8 @@
 """Alembic environment for deadline-manager.
 
 Uses a synchronous SQLite connection (required by Alembic's standard runner)
-against the same database path that db.py uses.  The RAILWAY_VOLUME_MOUNT_PATH
-env-var is honoured so the correct file is migrated on Railway.
+against the same database path that db.py uses.  The DATA_DIR env-var is
+honoured so the correct file is migrated when running in a container.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ import models  # noqa: F401 — registers all table metadata
 config = context.config
 
 # Wire up the DB URL the same way db.py does
-_db_dir = os.environ.get("RAILWAY_VOLUME_MOUNT_PATH", ".")
+_db_dir = os.environ.get("DATA_DIR", ".")
 _DATABASE_URL = f"sqlite:///{_db_dir}/deadlines.db"  # sync driver for Alembic
 config.set_main_option("sqlalchemy.url", _DATABASE_URL)
 

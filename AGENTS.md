@@ -23,7 +23,7 @@ bot.py              Entry point. Loads cogs, runs alembic upgrade head, calls in
 config.py           Settings via pydantic-settings. ALLOWED_ROLE_IDS is a str;
                     use settings.parsed_role_ids (list[int]) in code.
                     Settings() needs # type: ignore[call-arg].
-                    resolved_port property: reads Railway $PORT env var first, falls back to api_port (default 8000).
+                    api_port (default 8000) is the port uvicorn binds to.
 models.py           SQLModel tables: Deadline and DeadlineMember.
                     NO `from __future__ import annotations` — breaks SQLModel runtime.
                     Datetimes use datetime.now(UTC).replace(tzinfo=None) as default_factory.
@@ -295,7 +295,7 @@ Raycast (oauth.ts)
 
 ### Discord Developer Portal configuration
 
-In your Discord app (client ID `1484564963996598413`), under **OAuth2 → Redirects**, register **exactly**:
+In your Discord app, under **OAuth2 → Redirects**, register **exactly**:
 
 ```
 https://raycast.com/redirect?packageName=Extension
@@ -320,20 +320,15 @@ the proxy is unnecessary and introduces confusion about which redirect URI to re
 
 ### Raycast extension API base URL
 
-The extension (`raycast-extension/src/api.ts`) calls the Railway-hosted FastAPI server.
-The URL must **not** include a port number:
+The extension (`raycast-extension/src/api.ts`) calls the home-server-hosted FastAPI server.
+The URL must **not** include a port number — Traefik terminates TLS at 443 externally:
 
 ```ts
-// Correct — Railway's HTTPS ingress terminates TLS at port 443
-const API_BASE_URL = "https://deadline-manager-production.up.railway.app";
-
-// Wrong — port 8080 is the internal container port, not the public-facing one
-// const API_BASE_URL = "https://deadline-manager-production.up.railway.app:8080";
+// apiBaseUrl is configured as a Raycast preference — no hardcoded URL.
 ```
 
-The `api_port` setting in `config.py` (default `8000`) is for local development and is
-the port uvicorn binds to inside the container. Railway routes external HTTPS traffic to
-it automatically.
+The `api_port` setting in `config.py` (default `8000`) is the port uvicorn binds to inside
+the container. Traefik routes external HTTPS traffic to it automatically.
 
 ## Migrations (Alembic)
 
@@ -344,18 +339,15 @@ it automatically.
 3. **`timedelta.days` truncates** — `delta.days` for fractional days rounds down; tests that
    compare days remaining use `>= N-1` where timing is involved.
 4. **`yearfirst=True` in dateutil** — required to parse ISO dates like `2026-07-09` correctly.
-5. **`intents.members = True` removed** — caused `PrivilegedIntentsRequired` on Railway.
+5. **`intents.members = True` removed** — caused `PrivilegedIntentsRequired` errors.
 6. **`Settings()` call** — needs `# type: ignore[call-arg]`; `ty` doesn't understand
    pydantic-settings env population.
 7. **`ty` false positives in tests** — `ty` incorrectly flags keyword args to `.callback()`
    as "already assigned". These are advisory and do not block CI.
-8. **Railway volume** — mount at `/data`; `db.py` reads `RAILWAY_VOLUME_MOUNT_PATH` env var
-   to locate `deadlines.db`.
-9. **Railway `$PORT`** — Railway injects a `PORT` env var telling the container which port to
-   bind to. `config.py`'s `resolved_port` property reads `PORT` first, falling back to
-   `api_port` (default `8000`) for local dev. `bot.py` passes `settings.resolved_port` to
-   uvicorn. Never hardcode port `8000` or `8080` in the Railway service URL — Railway's HTTPS
-   ingress always listens on 443 externally regardless of the container port.
+8. **Persistent volume** — mount a host directory to `/data` inside the container; set
+   `DATA_DIR=/data` in the environment. `db.py` reads `DATA_DIR` to locate `deadlines.db`.
+9. **Fixed port** — uvicorn binds to `api_port` (default `8000`). Traefik routes external
+   HTTPS (443) to this port. Never include the port in the public-facing URL.
 10. **`notify_users` requires the live bot** — `discord_utils.notify_users(bot, ids, msg)` calls
     `bot.fetch_user()` which needs a connected `discord.Client`. The FastAPI layer receives the
     bot via `app.state.bot` (set in `create_app(bot=...)` in `api/main.py`) and retrieves it
@@ -408,7 +400,7 @@ The bot runs `alembic upgrade head` automatically on startup (in `bot.py`) befor
 
 ### env.py notes
 
-- `migrations/env.py` reads `RAILWAY_VOLUME_MOUNT_PATH` (same as `db.py`) to find the DB.
+- `migrations/env.py` reads `DATA_DIR` (same as `db.py`) to find the DB.
 - Uses the **sync** SQLite driver (`sqlite:///`) — Alembic's standard runner is synchronous.
   `db.py` continues to use `aiosqlite`.
 - `render_as_batch=True` is set in both offline and online modes (required for SQLite).

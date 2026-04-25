@@ -1,6 +1,14 @@
 import { getAccessToken } from "@raycast/utils";
+import { getPreferenceValues } from "@raycast/api";
 
-const API_BASE_URL = "https://deadline-manager-production.up.railway.app";
+interface Preferences {
+  apiBaseUrl: string;
+  discordClientId: string;
+}
+
+function getApiBaseUrl(): string {
+  return getPreferenceValues<Preferences>().apiBaseUrl.replace(/\/$/, "");
+}
 
 // ── Types (mirroring api/schemas.py) ─────────────────────────────────────────
 
@@ -43,7 +51,7 @@ export interface DeadlineEditRequest {
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const { token } = getAccessToken();
-  const url = `${API_BASE_URL}${path}`;
+  const url = `${getApiBaseUrl()}${path}`;
   console.log(`[api] ${init?.method ?? "GET"} ${url}`);
   const response = await fetch(url, {
     ...init,

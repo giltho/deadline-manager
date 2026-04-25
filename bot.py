@@ -108,7 +108,7 @@ async def main() -> None:
     uvicorn_config = uvicorn.Config(
         app,
         host="0.0.0.0",
-        port=settings.resolved_port,
+        port=settings.api_port,
         log_level="info",
         # loop="none" tells uvicorn not to create its own event loop; it will
         # use the one that is already running (the same loop as the Discord bot).

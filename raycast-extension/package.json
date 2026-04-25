@@ -12,6 +12,22 @@
     "Productivity"
   ],
   "license": "MIT",
+  "preferences": [
+    {
+      "name": "apiBaseUrl",
+      "title": "API Base URL",
+      "description": "Base URL of the Deadline Manager FastAPI server, e.g. https://deadlines.example.com",
+      "type": "textfield",
+      "required": true
+    },
+    {
+      "name": "discordClientId",
+      "title": "Discord Client ID",
+      "description": "OAuth2 Client ID of the Discord application used for authentication.",
+      "type": "textfield",
+      "required": true
+    }
+  ],
   "commands": [
     {
       "name": "list-deadlines",

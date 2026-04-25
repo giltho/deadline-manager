@@ -11,9 +11,10 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from models import Deadline, DeadlineMember
 
-# Use a Railway persistent volume when available, otherwise local file.
-# On Railway: attach a volume at /data and this picks it up automatically.
-_db_dir = os.environ.get("RAILWAY_VOLUME_MOUNT_PATH", ".")
+# Use a configurable data directory, falling back to the current directory for local dev
+# Set DATA_DIR in your environment (or docker-compose) to point at a persistent volume.
+
+_db_dir = os.environ.get("DATA_DIR", ".")
 _DATABASE_URL = f"sqlite+aiosqlite:///{_db_dir}/deadlines.db"
 
 _engine = create_async_engine(_DATABASE_URL, echo=False)

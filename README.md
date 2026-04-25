@@ -137,42 +137,39 @@ All configuration is via environment variables (or a `.env` file at the project 
 
 **Invite the bot** — Generate an invite URL with the `bot` and `applications.commands` scopes and the following permissions: Send Messages, Embed Links, Read Message History, Mention Everyone (for reminder pings).
 
-## Deploying to Railway
+## Deploying with Docker Compose
 
-The project includes a multi-stage `Dockerfile` ready for [Railway](https://railway.app).
+The project includes a `Dockerfile` and `docker-compose.yml` designed to run behind a [Traefik](https://traefik.io/) reverse proxy with automatic TLS via Let's Encrypt.
+
+### Prerequisites
+
+- A server with Docker and Docker Compose installed
+- A Traefik instance running and connected to a Docker network named `traefik`
+- A domain pointed at the server
 
 ### Steps
 
-1. Push the repository to GitHub (or connect directly via the Railway CLI).
+1. Copy the example env file and fill in your values:
 
-2. Create a new project in Railway and select **Deploy from GitHub repo** (or **Deploy from Dockerfile** if using the CLI).
-
-3. Set the following environment variables in Railway's **Variables** tab — do not commit a `.env` file:
-
-   ```
-   DISCORD_TOKEN=...
-   DISCORD_GUILD_ID=...
-   ALLOWED_ROLE_IDS=...
-   REMINDER_CHANNEL_ID=...
+   ```bash
+   cp .env.example .env
    ```
 
-4. Attach a [Railway Volume](https://docs.railway.app/reference/volumes) at `/data` to persist the SQLite database across deploys. The bot reads `RAILWAY_VOLUME_MOUNT_PATH` automatically.
+   Set `DEADLINE_HOSTNAME` to your public domain (e.g. `deadlines.example.com`). This is used by Traefik to route HTTPS traffic to the container.
 
-5. Railway will build the Docker image and start the bot automatically.
+2. Create the data directory for the SQLite database:
 
-### Deploying with the Railway CLI
+   ```bash
+   mkdir -p deadline_manager
+   ```
 
-```bash
-# Install the CLI
-npm install -g @railway/cli
+3. Build and start the service:
 
-# Log in and link the project
-railway login
-railway link
+   ```bash
+   docker compose up -d --build
+   ```
 
-# Deploy
-railway up --detach
-```
+The bot will apply any pending database migrations automatically on startup before accepting connections.
 
 ## Microsoft Graph Calendar Sync (Optional)
 
@@ -199,7 +196,7 @@ deadline-manager/
 │   ├── deadlines.py    # All /deadline slash commands
 │   └── reminders.py    # APScheduler-based reminder cog
 ├── tests/              # pytest test suite (86 tests)
-├── Dockerfile          # Multi-stage Railway-ready build
+├── Dockerfile          # Multi-stage build
 ├── pyproject.toml      # uv project, dependencies, ruff and pytest config
 └── .env.example        # Template for required environment variables
 ```
