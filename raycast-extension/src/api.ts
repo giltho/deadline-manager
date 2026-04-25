@@ -7,7 +7,11 @@ interface Preferences {
 }
 
 function getApiBaseUrl(): string {
-  return getPreferenceValues<Preferences>().apiBaseUrl.replace(/\/$/, "");
+  let url = getPreferenceValues<Preferences>().apiBaseUrl.trim().replace(/\/$/, "");
+  if (!url.startsWith("http://") && !url.startsWith("https://")) {
+    url = "https://" + url;
+  }
+  return url;
 }
 
 // ── Types (mirroring api/schemas.py) ─────────────────────────────────────────

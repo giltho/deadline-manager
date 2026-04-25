@@ -16,7 +16,7 @@
     {
       "name": "apiBaseUrl",
       "title": "API Base URL",
-      "description": "Base URL of the Deadline Manager FastAPI server, e.g. https://deadlines.example.com",
+      "description": "Base URL of the Deadline Manager FastAPI server, e.g. deadlines.example.com or https://deadlines.example.com (https:// is added automatically if omitted).",
       "type": "textfield",
       "required": true
     },
